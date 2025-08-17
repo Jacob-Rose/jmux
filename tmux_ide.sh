@@ -13,13 +13,11 @@ set preview_directories false
 # Open files with Enter key - use readlink to get absolute path
 map <Enter> shell tmux send-keys -t 1 Escape ":e $(readlink -f %p)" Enter
 unmap l
+unmap q
 
 # Switch between panes with Tab
 map <TAB> shell tmux select-pane -t 1
 map <S-TAB> shell tmux select-pane -t 0
-
-# Quit key: q  
-map q shell tmux kill-session -t ide
 EOF
 
 # Nvim config
@@ -29,15 +27,6 @@ cat > "$NVIM_TEMP/init.lua" <<'EOF'
 vim.cmd('silent! unmap <C-q>')
 vim.cmd('set t_ku=<Esc>[A')
 
-vim.keymap.set('n', '<leader>q', function()
-  print("Leader+q pressed - quitting nvim")
-  vim.cmd('qa!')
-end, { noremap = true, silent = true })
-
-vim.keymap.set('n', '<C-q>', function()
-  print("Ctrl+q pressed - quitting nvim")
-  vim.fn.system("tmux kill-session -t ide")
-end, { noremap = true, silent = true })
 
 -- Switch between panes with Tab
 vim.keymap.set('n', '<Tab>', function()
