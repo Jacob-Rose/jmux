@@ -14,6 +14,8 @@ set preview_directories false
 map <Enter> shell tmux send-keys -t 1 Escape ":e $(readlink -f %p)" Enter
 unmap l
 unmap q
+# Disable right arrow from opening files - only allow directory navigation
+map <right> eval fm.cd(fm.thisfile.path) if fm.thisfile.is_directory else None
 
 # Switch between panes with Tab
 map <TAB> shell tmux select-pane -t 1
