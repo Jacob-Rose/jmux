@@ -6,6 +6,10 @@ NVIM_TEMP="$SCRIPT_DIR/nvim_temp_config"
 # Ranger config
 mkdir -p "$RANGER_TEMP"
 cat > "$RANGER_TEMP/rc.conf" <<'EOF'
+# Hide preview panel
+set preview_files false
+set preview_directories false
+
 # Completely disable default file opening
 map <Enter> shell tmux send-keys -t 1 Escape ":e %p" Enter
 unmap l
@@ -21,9 +25,6 @@ EOF
 # Nvim config
 mkdir -p "$NVIM_TEMP"
 cat > "$NVIM_TEMP/init.lua" <<'EOF'
--- Custom config loaded indicator
-print("Custom nvim config loaded!")
-
 -- Disable Ctrl+Q terminal control
 vim.cmd('silent! unmap <C-q>')
 vim.cmd('set t_ku=<Esc>[A')
@@ -48,8 +49,8 @@ EOF
 tmux new-session -d -s ide "ranger --confdir='$RANGER_TEMP'"
 tmux rename-window 'dev'
 
-# Split window - ranger gets 60%, nvim 40%
-tmux split-window -h -p 40 "nvim -u $NVIM_TEMP/init.lua"
+# Split window - ranger gets 40%, nvim 60%
+tmux split-window -h -p 60 "nvim -u $NVIM_TEMP/init.lua"
 
 # Focus on ranger pane initially
 tmux select-pane -t 0
