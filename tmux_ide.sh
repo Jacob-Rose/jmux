@@ -10,8 +10,8 @@ cat > "$RANGER_TEMP/rc.conf" <<'EOF'
 set preview_files false
 set preview_directories false
 
-# Completely disable default file opening
-map <Enter> shell tmux send-keys -t 1 Escape ":e %p" Enter
+# Open files with Enter key - use readlink to get absolute path
+map <Enter> shell tmux send-keys -t 1 Escape ":e $(readlink -f %p)" Enter
 unmap l
 
 # Switch between panes with Tab
@@ -46,11 +46,11 @@ end, { noremap = true, silent = true })
 EOF
 
 # Start tmux session with ranger in the first pane
-tmux new-session -d -s ide "ranger --confdir='$RANGER_TEMP'"
+tmux new-session -d -s ide "cd '$SCRIPT_DIR' && ranger --confdir='$RANGER_TEMP'"
 tmux rename-window 'dev'
 
 # Split window - ranger gets 40%, nvim 60%
-tmux split-window -h -p 60 "nvim -u $NVIM_TEMP/init.lua"
+tmux split-window -h -p 60 "cd '$SCRIPT_DIR' && nvim -u $NVIM_TEMP/init.lua"
 
 # Focus on ranger pane initially
 tmux select-pane -t 0
