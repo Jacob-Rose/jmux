@@ -1,10 +1,21 @@
 #!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RANGER_TEMP="$SCRIPT_DIR/ranger_temp_config"
-NVIM_TEMP="$SCRIPT_DIR/nvim_temp_config"
+
+# jmux: A tmux-based IDE with ranger and nvim
+# Usage: jmux [directory]
+
+# Set working directory (use argument or current directory)
+WORK_DIR="${1:-$(pwd)}"
+WORK_DIR="$(cd "$WORK_DIR" && pwd)"  # Get absolute path
+
+# Configuration paths
+CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}/jmux"
+RANGER_TEMP="$CONFIG_BASE/ranger_config"
+NVIM_TEMP="$CONFIG_BASE/nvim_config"
+
+# Create config directories
+mkdir -p "$RANGER_TEMP" "$NVIM_TEMP"
 
 # Ranger config
-mkdir -p "$RANGER_TEMP"
 cat > "$RANGER_TEMP/rc.conf" <<'EOF'
 # Hide preview panel
 set preview_files false
@@ -23,7 +34,6 @@ map <S-TAB> shell tmux select-pane -t 0
 EOF
 
 # Nvim config
-mkdir -p "$NVIM_TEMP"
 cat > "$NVIM_TEMP/init.lua" <<'EOF'
 -- Disable Ctrl+Q terminal control
 vim.cmd('silent! unmap <C-q>')
@@ -37,11 +47,11 @@ end, { noremap = true, silent = true })
 EOF
 
 # Start tmux session with ranger in the first pane
-tmux new-session -d -s ide "cd '$SCRIPT_DIR' && ranger --confdir='$RANGER_TEMP'; tmux kill-session -t ide"
+tmux new-session -d -s ide "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'; tmux kill-session -t ide"
 tmux rename-window 'dev'
 
 # Split window - ranger gets 40%, nvim 60%
-tmux split-window -h -p 60 "cd '$SCRIPT_DIR' && nvim -u $NVIM_TEMP/init.lua; tmux kill-session -t ide"
+tmux split-window -h -p 60 "cd '$WORK_DIR' && nvim -u $NVIM_TEMP/init.lua; tmux kill-session -t ide"
 
 # Focus on ranger pane initially
 tmux select-pane -t 0
