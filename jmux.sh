@@ -31,6 +31,9 @@ map <right> eval fm.cd(fm.thisfile.path) if fm.thisfile.is_directory else None
 # Switch between panes with Tab
 map <TAB> shell tmux select-pane -t 1
 map <S-TAB> shell tmux select-pane -t 0
+
+# Open lazygit in popup with ;g
+map ;g shell tmux display-popup -w 90%% -h 90%% -E lazygit
 EOF
 
 # Nvim config

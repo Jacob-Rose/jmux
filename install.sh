@@ -44,6 +44,16 @@ else
     exit 1
 fi
 
+# Check lazygit
+echo "Testing lazygit..."
+if lazygit --version; then
+    echo "lazygit is working"
+else
+    echo "Error: lazygit is required but not working."
+    echo "lazygit exit code: $?"
+    exit 1
+fi
+
 # Create config directory
 echo "Creating config directory at $CONFIG_DIR..."
 mkdir -p "$CONFIG_DIR"
