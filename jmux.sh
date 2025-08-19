@@ -291,54 +291,73 @@ vim.cmd([[
 ]])
 
 -- Auto-create buffer list when second file is opened
-vim.api.nvim_create_augroup('BufferManagement', { clear = true })
-
--- Create buffer list when nvim starts
-vim.api.nvim_create_autocmd('VimEnter', {
-  group = 'BufferManagement',
-  callback = function()
-    show_buffer_list()
-    update_buffer_list()
-  end
-})
-
--- Only update buffer list on buffer enter (don't create)
-vim.api.nvim_create_autocmd('BufEnter', {
-  group = 'BufferManagement',
-  callback = function()
-    -- Skip if we're in the buffer list itself
-    local current_buf_name = vim.api.nvim_buf_get_name(0)
-    if current_buf_name:match('BufferList$') then
-      return
+if vim.fn.has('nvim-0.7') == 1 then
+  vim.api.nvim_create_augroup('BufferManagement', { clear = true })
+  
+  -- Create buffer list when nvim starts
+  vim.api.nvim_create_autocmd('VimEnter', {
+    group = 'BufferManagement',
+    callback = function()
+      show_buffer_list()
+      update_buffer_list()
     end
-    
-    -- Only update if buffer list exists
+  })
+  
+  -- Only update buffer list on buffer enter (don't create)
+  vim.api.nvim_create_autocmd('BufEnter', {
+    group = 'BufferManagement',
+    callback = function()
+      -- Skip if we're in the buffer list itself
+      local current_buf_name = vim.api.nvim_buf_get_name(0)
+      if current_buf_name:match('BufferList$') then
+        return
+      end
+      
+      -- Only update if buffer list exists
+      update_buffer_list()
+    end
+  })
+  
+  -- Shared callback for text changes
+  local function on_text_changed()
+    update_buffer_history()
     update_buffer_list()
   end
-})
-
--- Shared callback for text changes
-local function on_text_changed()
-  update_buffer_history()
-  update_buffer_list()
+  
+  -- Move buffer to top of history when modified
+  vim.api.nvim_create_autocmd({'TextChanged', 'TextChangedI'}, {
+    group = 'BufferManagement',
+    callback = on_text_changed
+  })
+  
+  -- Update buffer list when file is saved (remove modified indicator)
+  vim.api.nvim_create_autocmd({'BufWritePost', 'BufWrite'}, {
+    group = 'BufferManagement',
+    callback = function()
+      -- Use vim.schedule to ensure the modified flag is updated
+      vim.schedule(function()
+        update_buffer_list()
+      end)
+    end
+  })
+else
+  -- Legacy autocmds for nvim 0.6.1
+  vim.cmd([[
+    augroup BufferManagement
+      autocmd!
+      autocmd VimEnter * lua show_buffer_list(); update_buffer_list()
+      autocmd BufEnter * lua if not vim.api.nvim_buf_get_name(0):match('BufferList$') then update_buffer_list() end
+      autocmd TextChanged,TextChangedI * lua update_buffer_history(); update_buffer_list()
+      autocmd BufWritePost,BufWrite * lua update_buffer_list()
+    augroup END
+  ]])
 end
 
--- Move buffer to top of history when modified
-vim.api.nvim_create_autocmd({'TextChanged', 'TextChangedI'}, {
-  group = 'BufferManagement',
-  callback = on_text_changed
-})
-
--- Update buffer list when file is saved (remove modified indicator)
-vim.api.nvim_create_autocmd({'BufWritePost', 'BufWrite'}, {
-  group = 'BufferManagement',
-  callback = function()
-    -- Use vim.schedule to ensure the modified flag is updated
-    vim.schedule(function()
-      update_buffer_list()
-    end)
-  end
-})
+-- Function to open fuzzy finder
+function open_fuzzy_finder()
+  local config_base = vim.fn.expand("$HOME/.config/jmux")
+  vim.fn.system("tmux display-popup -w 80% -h 60% -E '" .. config_base .. "/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"' &")
+end
 
 -- Function to cycle through valid buffers only (skip buffer list)
 function cycle_buffers(direction)
@@ -377,7 +396,11 @@ function cycle_buffers(direction)
 end
 
 -- Add command to manually show buffer list
-vim.api.nvim_create_user_command('Buffers', show_buffer_list, {})
+if vim.fn.has('nvim-0.7') == 1 then
+  vim.api.nvim_create_user_command('Buffers', show_buffer_list, {})
+else
+  vim.cmd('command! Buffers lua show_buffer_list()')
+end
 
 -- Buffer navigation keybinds
 if vim.fn.has('nvim-0.7') == 1 then
@@ -415,10 +438,10 @@ else
   vim.cmd('nnoremap <silent> <Tab> :lua vim.fn.system("tmux select-pane -t 0")<CR>')
   vim.cmd('nnoremap <silent> <C-n> :lua cycle_buffers(1)<CR>')
   vim.cmd('nnoremap <silent> <C-m> :lua cycle_buffers(-1)<CR>')
-  vim.cmd('nnoremap <silent> <C-p> :lua vim.fn.system("tmux display-popup -w 80%% -h 60%% -E \'' .. vim.fn.expand("$HOME/.config/jmux") .. '/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"\' &")<CR>')
+  vim.cmd('nnoremap <silent> <C-p> :lua open_fuzzy_finder()<CR>')
   vim.cmd('nnoremap <silent> ]b :lua cycle_buffers(1)<CR>')
   vim.cmd('nnoremap <silent> [b :lua cycle_buffers(-1)<CR>')
-  vim.cmd('nnoremap <silent> <C-b> :lua show_buffer_list()<CR>')
+  vim.cmd('nnoremap <silent> <C-b> :lua if find_buffer_list_window() then vim.api.nvim_win_close(find_buffer_list_window(), false) else show_buffer_list() end<CR>')
 end
 EOF
 
