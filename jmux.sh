@@ -153,9 +153,12 @@ function update_buffer_list()
   local lines = {'RECENT FILES:', ''}
   local current_buf = vim.fn.bufnr('%')
   
-  -- Get list of all buffers
+  -- Get list of buffers ordered by history (most recent first)
+  local history = vim.g.buffer_history or {}
   local buffers = {}
-  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+  
+  -- Add buffers in history order
+  for _, buf in ipairs(history) do
     if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_get_option(buf, 'buflisted') then
       local name = vim.api.nvim_buf_get_name(buf)
       if name ~= '' and not name:match('BufferList$') then
@@ -164,11 +167,32 @@ function update_buffer_list()
     end
   end
   
+  -- Add any buffers not in history (fallback)
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_get_option(buf, 'buflisted') then
+      local name = vim.api.nvim_buf_get_name(buf)
+      if name ~= '' and not name:match('BufferList$') then
+        -- Check if already in buffers list
+        local already_added = false
+        for _, existing in ipairs(buffers) do
+          if existing.buf == buf then
+            already_added = true
+            break
+          end
+        end
+        if not already_added then
+          table.insert(buffers, {buf = buf, name = name})
+        end
+      end
+    end
+  end
+  
   -- Display buffers
   for i, buffer in ipairs(buffers) do
     local filename = vim.fn.fnamemodify(buffer.name, ':t')
     local prefix = (buffer.buf == current_buf) and '▶ ' or '  '
-    local modified = vim.api.nvim_buf_get_option(buffer.buf, 'modified') and ' ●' or ''
+    local is_modified = vim.api.nvim_buf_get_option(buffer.buf, 'modified')
+    local modified = is_modified and ' ●' or ''
     table.insert(lines, prefix .. i .. ': ' .. filename .. modified)
   end
   
@@ -179,6 +203,13 @@ function update_buffer_list()
   vim.api.nvim_buf_set_option(buflist_buf, 'modifiable', true)
   vim.api.nvim_buf_set_lines(buflist_buf, 0, -1, false, lines)
   vim.api.nvim_buf_set_option(buflist_buf, 'modifiable', false)
+  
+  -- Force redraw of the buffer list window (similar to quit file logic)
+  if vim.api.nvim_win_is_valid(buflist_win) then
+    vim.api.nvim_win_call(buflist_win, function()
+      vim.cmd('redraw')
+    end)
+  end
 end
 
 -- Go to selected buffer
@@ -262,7 +293,7 @@ vim.api.nvim_create_augroup('BufferManagement', { clear = true })
 vim.api.nvim_create_autocmd('BufEnter', {
   group = 'BufferManagement',
   callback = function()
-    update_buffer_history()
+    -- Don't update history on BufEnter, only show/update the list
     
     -- Count loaded buffers
     local count = 0
@@ -280,6 +311,34 @@ vim.api.nvim_create_autocmd('BufEnter', {
     end
     
     update_buffer_list()
+  end
+})
+
+-- Move buffer to top of history when modified
+vim.api.nvim_create_autocmd('TextChanged', {
+  group = 'BufferManagement',
+  callback = function()
+    update_buffer_history()
+    update_buffer_list()
+  end
+})
+
+vim.api.nvim_create_autocmd('TextChangedI', {
+  group = 'BufferManagement',
+  callback = function()
+    update_buffer_history()
+    update_buffer_list()
+  end
+})
+
+-- Update buffer list when file is saved (remove modified indicator)
+vim.api.nvim_create_autocmd({'BufWritePost', 'BufWrite'}, {
+  group = 'BufferManagement',
+  callback = function()
+    -- Use vim.schedule to ensure the modified flag is updated
+    vim.schedule(function()
+      update_buffer_list()
+    end)
   end
 })
 
