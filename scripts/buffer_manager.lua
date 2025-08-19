@@ -59,6 +59,28 @@ function update_buffer_history()
   vim.g.buffer_history = history
 end
 
+-- Create recent files display in dedicated window
+function create_recent_files_display()
+  vim.cmd('enew')
+  local buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_name(buf, 'RecentFiles')
+  
+  -- Configure recent files window
+  vim.api.nvim_buf_set_option(buf, 'buftype', 'nofile')
+  vim.api.nvim_buf_set_option(buf, 'swapfile', false)
+  vim.api.nvim_buf_set_option(buf, 'modifiable', true)
+  vim.opt.number = false
+  vim.opt.relativenumber = false
+  vim.opt.wrap = false
+  vim.opt.cursorline = true
+  
+  -- Set up keybindings for remote buffer selection
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<CR>', '<cmd>lua goto_buffer_in_main_window()<CR>', {silent = true})
+  vim.api.nvim_buf_set_keymap(buf, 'n', 'q', '<cmd>lua vim.fn.system("tmux kill-window -t ide:recent-files")<CR>', {silent = true})
+  
+  update_recent_files_display()
+end
+
 -- Show buffer list in vertical split
 function show_buffer_list()
   -- Check if buffer list window already exists
@@ -154,7 +176,7 @@ function update_buffer_list()
   end
 end
 
--- Go to selected buffer
+-- Go to selected buffer (for local buffer list)
 function goto_selected_buffer()
   local line = vim.fn.line('.')
   if line <= 2 then return end -- Skip header lines
@@ -163,8 +185,84 @@ function goto_selected_buffer()
   
   local selected_index = line - 2 -- Account for header
   if selected_index <= #buffers then
-    vim.cmd('wincmd p') -- Go to main window
-    vim.cmd('buffer ' .. buffers[selected_index])
+    -- Find the main editor window (not the buffer list)
+    local main_win = nil
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local buf = vim.api.nvim_win_get_buf(win)
+      local name = vim.api.nvim_buf_get_name(buf)
+      if not name:match('BufferList$') then
+        main_win = win
+        break
+      end
+    end
+    
+    if main_win then
+      vim.api.nvim_set_current_win(main_win)
+      vim.cmd('buffer ' .. buffers[selected_index])
+    end
+  end
+end
+
+-- Go to selected buffer from remote recent-files window
+function goto_buffer_in_main_window()
+  local line = vim.fn.line('.')
+  if line <= 2 then return end -- Skip header lines
+  
+  local selected_index = line - 2 -- Account for header
+  
+  -- Send command to main nvim window to open the buffer
+  local cmd = string.format(
+    "tmux send-keys -t ide:dev.1 ':lua cycle_to_buffer_index(%d)' Enter",
+    selected_index
+  )
+  vim.fn.system(cmd)
+  
+  -- Switch back to main dev window
+  vim.fn.system("tmux select-window -t ide:dev")
+end
+
+-- Update recent files display in dedicated window
+function update_recent_files_display()
+  local lines = {'RECENT FILES:', ''}
+  
+  -- This is a simplified display - in a real implementation you'd get buffer data from main nvim
+  -- For now, show placeholder
+  table.insert(lines, '  Loading recent files...')
+  table.insert(lines, '  (Switch to main window to see files)')
+  
+  local buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_option(buf, 'modifiable', true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.api.nvim_buf_set_option(buf, 'modifiable', false)
+end
+
+-- Helper function to cycle to specific buffer index (for remote access)
+function cycle_to_buffer_index(index)
+  local valid_buffers = get_valid_buffers()
+  if index > 0 and index <= #valid_buffers then
+    vim.cmd('buffer ' .. valid_buffers[index])
+  end
+end
+
+-- Open file in main editor window, never in buffer list
+function open_file_in_main_editor(filepath)
+  -- Find the main editor window (not the buffer list)
+  local main_win = nil
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local buf = vim.api.nvim_win_get_buf(win)
+    local name = vim.api.nvim_buf_get_name(buf)
+    if not name:match('BufferList$') and not name:match('RecentFiles$') then
+      main_win = win
+      break
+    end
+  end
+  
+  if main_win then
+    vim.api.nvim_set_current_win(main_win)
+    vim.cmd('edit ' .. vim.fn.fnameescape(filepath))
+  else
+    -- Fallback: just open the file
+    vim.cmd('edit ' .. vim.fn.fnameescape(filepath))
   end
 end
 

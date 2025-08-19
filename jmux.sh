@@ -72,7 +72,7 @@ set unicode_ellipsis true
 set show_selection_in_titlebar false
 
 # Open files with Enter key - create nvim pane if needed, or open in existing buffer, then focus nvim
-map <Enter> shell if tmux list-panes | grep -q "1:"; then tmux send-keys -t 1 Escape ":e \$(readlink -f %p)" Enter; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -h -p 60 "cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi
+map <Enter> shell if tmux list-panes -t ide:dev | grep -q "1:"; then tmux send-keys -t ide:dev.1 Escape ":lua open_file_in_main_editor('\$(readlink -f %p)')" Enter; tmux select-window -t ide:dev; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -t ide:dev -h -p 60 "cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi
 unmap l
 unmap q
 # Disable right arrow from opening files - only allow directory navigation
