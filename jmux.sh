@@ -353,6 +353,12 @@ else
   ]])
 end
 
+-- Function to open fuzzy finder
+function open_fuzzy_finder()
+  local config_base = vim.fn.expand("$HOME/.config/jmux")
+  vim.fn.system("tmux display-popup -w 80% -h 60% -E '" .. config_base .. "/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"' &")
+end
+
 -- Function to cycle through valid buffers only (skip buffer list)
 function cycle_buffers(direction)
   local valid_buffers = get_valid_buffers()
@@ -432,7 +438,7 @@ else
   vim.cmd('nnoremap <silent> <Tab> :lua vim.fn.system("tmux select-pane -t 0")<CR>')
   vim.cmd('nnoremap <silent> <C-n> :lua cycle_buffers(1)<CR>')
   vim.cmd('nnoremap <silent> <C-m> :lua cycle_buffers(-1)<CR>')
-  vim.cmd('nnoremap <silent> <C-p> :lua vim.fn.system("tmux display-popup -w 80%% -h 60%% -E \'' .. vim.fn.expand("$HOME/.config/jmux") .. '/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"\' &")<CR>')
+  vim.cmd('nnoremap <silent> <C-p> :lua open_fuzzy_finder()<CR>')
   vim.cmd('nnoremap <silent> ]b :lua cycle_buffers(1)<CR>')
   vim.cmd('nnoremap <silent> [b :lua cycle_buffers(-1)<CR>')
   vim.cmd('nnoremap <silent> <C-b> :lua if find_buffer_list_window() then vim.api.nvim_win_close(find_buffer_list_window(), false) else show_buffer_list() end<CR>')
