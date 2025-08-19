@@ -291,54 +291,67 @@ vim.cmd([[
 ]])
 
 -- Auto-create buffer list when second file is opened
-vim.api.nvim_create_augroup('BufferManagement', { clear = true })
-
--- Create buffer list when nvim starts
-vim.api.nvim_create_autocmd('VimEnter', {
-  group = 'BufferManagement',
-  callback = function()
-    show_buffer_list()
-    update_buffer_list()
-  end
-})
-
--- Only update buffer list on buffer enter (don't create)
-vim.api.nvim_create_autocmd('BufEnter', {
-  group = 'BufferManagement',
-  callback = function()
-    -- Skip if we're in the buffer list itself
-    local current_buf_name = vim.api.nvim_buf_get_name(0)
-    if current_buf_name:match('BufferList$') then
-      return
-    end
-    
-    -- Only update if buffer list exists
-    update_buffer_list()
-  end
-})
-
--- Shared callback for text changes
-local function on_text_changed()
-  update_buffer_history()
-  update_buffer_list()
-end
-
--- Move buffer to top of history when modified
-vim.api.nvim_create_autocmd({'TextChanged', 'TextChangedI'}, {
-  group = 'BufferManagement',
-  callback = on_text_changed
-})
-
--- Update buffer list when file is saved (remove modified indicator)
-vim.api.nvim_create_autocmd({'BufWritePost', 'BufWrite'}, {
-  group = 'BufferManagement',
-  callback = function()
-    -- Use vim.schedule to ensure the modified flag is updated
-    vim.schedule(function()
+if vim.fn.has('nvim-0.7') == 1 then
+  vim.api.nvim_create_augroup('BufferManagement', { clear = true })
+  
+  -- Create buffer list when nvim starts
+  vim.api.nvim_create_autocmd('VimEnter', {
+    group = 'BufferManagement',
+    callback = function()
+      show_buffer_list()
       update_buffer_list()
-    end)
+    end
+  })
+  
+  -- Only update buffer list on buffer enter (don't create)
+  vim.api.nvim_create_autocmd('BufEnter', {
+    group = 'BufferManagement',
+    callback = function()
+      -- Skip if we're in the buffer list itself
+      local current_buf_name = vim.api.nvim_buf_get_name(0)
+      if current_buf_name:match('BufferList$') then
+        return
+      end
+      
+      -- Only update if buffer list exists
+      update_buffer_list()
+    end
+  })
+  
+  -- Shared callback for text changes
+  local function on_text_changed()
+    update_buffer_history()
+    update_buffer_list()
   end
-})
+  
+  -- Move buffer to top of history when modified
+  vim.api.nvim_create_autocmd({'TextChanged', 'TextChangedI'}, {
+    group = 'BufferManagement',
+    callback = on_text_changed
+  })
+  
+  -- Update buffer list when file is saved (remove modified indicator)
+  vim.api.nvim_create_autocmd({'BufWritePost', 'BufWrite'}, {
+    group = 'BufferManagement',
+    callback = function()
+      -- Use vim.schedule to ensure the modified flag is updated
+      vim.schedule(function()
+        update_buffer_list()
+      end)
+    end
+  })
+else
+  -- Legacy autocmds for nvim 0.6.1
+  vim.cmd([[
+    augroup BufferManagement
+      autocmd!
+      autocmd VimEnter * lua show_buffer_list(); update_buffer_list()
+      autocmd BufEnter * lua if not vim.api.nvim_buf_get_name(0):match('BufferList$') then update_buffer_list() end
+      autocmd TextChanged,TextChangedI * lua update_buffer_history(); update_buffer_list()
+      autocmd BufWritePost,BufWrite * lua update_buffer_list()
+    augroup END
+  ]])
+end
 
 -- Function to cycle through valid buffers only (skip buffer list)
 function cycle_buffers(direction)
