@@ -21,7 +21,7 @@ cat > "$RANGER_TEMP/rc.conf" <<EOF
 set preview_files false
 set preview_directories false
 
-# Open files with Enter key - create nvim pane if needed, or load into existing one
+# Open files with Enter key - create nvim pane if needed, or open in existing buffer
 map <Enter> shell if tmux list-panes | grep -q "1:"; then tmux send-keys -t 1 Escape ":e \$(readlink -f %p)" Enter; else tmux split-window -h -p 60 "cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'"; fi
 unmap l
 unmap q
@@ -42,21 +42,320 @@ cat > "$NVIM_TEMP/init.lua" <<'EOF'
 vim.cmd('silent! unmap <C-q>')
 vim.cmd('set t_ku=<Esc>[A')
 
--- Switch between panes with Tab (version-aware)
+-- Enable mouse support
+vim.opt.mouse = 'a'
+vim.opt.mousefocus = true
+
+-- Disable tab displays - we'll use buffers instead
+vim.opt.showtabline = 0
+
+-- Buffer management setup
+vim.g.buffer_history = {}
+
+-- Function to update buffer history
+function update_buffer_history()
+  local current_buf = vim.fn.bufnr('%')
+  local history = vim.g.buffer_history or {}
+  
+  -- Remove current buffer from history if it exists
+  for i, buf in ipairs(history) do
+    if buf == current_buf then
+      table.remove(history, i)
+      break
+    end
+  end
+  
+  -- Add current buffer to beginning of history
+  table.insert(history, 1, current_buf)
+  
+  -- Keep only last 10 buffers
+  if #history > 10 then
+    table.remove(history, #history)
+  end
+  
+  vim.g.buffer_history = history
+end
+
+-- Show buffer list in vertical split
+function show_buffer_list()
+  -- Check if buffer list window already exists
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local buf = vim.api.nvim_win_get_buf(win)
+    if vim.api.nvim_buf_get_name(buf):match('BufferList$') then
+      return -- Already exists
+    end
+  end
+  
+  -- Create vertical split for buffer list
+  vim.cmd('vertical 20new BufferList')
+  local buf = vim.api.nvim_get_current_buf()
+  
+  -- Configure buffer list window
+  vim.api.nvim_buf_set_option(buf, 'buftype', 'nofile')
+  vim.api.nvim_buf_set_option(buf, 'swapfile', false)
+  vim.api.nvim_buf_set_option(buf, 'modifiable', true)
+  vim.api.nvim_win_set_option(0, 'number', false)
+  vim.api.nvim_win_set_option(0, 'relativenumber', false)
+  vim.api.nvim_win_set_option(0, 'wrap', false)
+  vim.api.nvim_win_set_option(0, 'cursorline', true)
+  
+  update_buffer_list()
+  
+  -- Set up keybindings in buffer list
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<CR>', '<cmd>lua goto_selected_buffer()<CR>', {silent = true})
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<2-LeftMouse>', '<cmd>lua goto_selected_buffer()<CR>', {silent = true})
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<LeftMouse>', '<LeftMouse><cmd>lua goto_selected_buffer()<CR>', {silent = true})
+  vim.api.nvim_buf_set_keymap(buf, 'n', 'q', '<cmd>close<CR>', {silent = true})
+  
+  -- Make buffer list focusable but don't auto-focus
+  vim.api.nvim_win_set_option(0, 'winfixwidth', true)
+  
+  -- Go back to main window
+  vim.cmd('wincmd p')
+end
+
+-- Update buffer list display
+function update_buffer_list()
+  -- Find buffer list window
+  local buflist_win = nil
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local buf = vim.api.nvim_win_get_buf(win)
+    if vim.api.nvim_buf_get_name(buf):match('BufferList$') then
+      buflist_win = win
+      break
+    end
+  end
+  
+  if not buflist_win then return end
+  
+  local buflist_buf = vim.api.nvim_win_get_buf(buflist_win)
+  local lines = {'RECENT FILES:', ''}
+  local current_buf = vim.fn.bufnr('%')
+  
+  -- Get list of all buffers
+  local buffers = {}
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_get_option(buf, 'buflisted') then
+      local name = vim.api.nvim_buf_get_name(buf)
+      if name ~= '' and not name:match('BufferList$') then
+        table.insert(buffers, {buf = buf, name = name})
+      end
+    end
+  end
+  
+  -- Display buffers
+  for i, buffer in ipairs(buffers) do
+    local filename = vim.fn.fnamemodify(buffer.name, ':t')
+    local prefix = (buffer.buf == current_buf) and '▶ ' or '  '
+    local modified = vim.api.nvim_buf_get_option(buffer.buf, 'modified') and ' ●' or ''
+    table.insert(lines, prefix .. i .. ': ' .. filename .. modified)
+  end
+  
+  if #buffers == 0 then
+    table.insert(lines, '  No buffers')
+  end
+  
+  vim.api.nvim_buf_set_option(buflist_buf, 'modifiable', true)
+  vim.api.nvim_buf_set_lines(buflist_buf, 0, -1, false, lines)
+  vim.api.nvim_buf_set_option(buflist_buf, 'modifiable', false)
+end
+
+-- Go to selected buffer
+function goto_selected_buffer()
+  local line = vim.fn.line('.')
+  if line <= 2 then return end -- Skip header lines
+  
+  local buffers = {}
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_get_option(buf, 'buflisted') then
+      local name = vim.api.nvim_buf_get_name(buf)
+      if name ~= '' and not name:match('BufferList$') then
+        table.insert(buffers, buf)
+      end
+    end
+  end
+  
+  local selected_index = line - 2 -- Account for header
+  if selected_index <= #buffers then
+    vim.cmd('wincmd p') -- Go to main window
+    vim.cmd('buffer ' .. buffers[selected_index])
+  end
+end
+
+-- Override :q to switch to previous buffer instead of closing
+vim.cmd([[
+  command! -bang Q call QuitBuffer(<bang>0)
+  cnoreabbrev <expr> q (getcmdtype() is# ':' && getcmdline() is# 'q') ? 'Q' : 'q'
+  cnoreabbrev <expr> quit (getcmdtype() is# ':' && getcmdline() is# 'quit') ? 'Q' : 'quit'
+]])
+
+vim.cmd([[
+  function! QuitBuffer(force)
+    " Get list of valid buffers (exclude buffer list)
+    let valid_buffers = []
+    for buf in range(1, bufnr('$'))
+      if bufexists(buf) && buflisted(buf)
+        let name = bufname(buf)
+        if name != '' && name !~ 'BufferList$'
+          call add(valid_buffers, buf)
+        endif
+      endif
+    endfor
+    
+    " If more than one valid buffer, switch to another and close current
+    if len(valid_buffers) > 1
+      " Find a different buffer to switch to (not current)
+      let current = bufnr('%')
+      let next_buf = -1
+      for buf in valid_buffers
+        if buf != current
+          let next_buf = buf
+          break
+        endif
+      endfor
+      
+      if next_buf != -1
+        execute 'buffer ' . next_buf
+        if a:force
+          execute 'bdelete! ' . current
+        else
+          execute 'bdelete ' . current
+        endif
+        " Refresh the buffer list display
+        lua update_buffer_list()
+      endif
+    else
+      " Last buffer, close nvim
+      if a:force
+        qall!
+      else
+        qall
+      endif
+    endif
+  endfunction
+]])
+
+-- Auto-create buffer list when second file is opened
+vim.api.nvim_create_augroup('BufferManagement', { clear = true })
+
+vim.api.nvim_create_autocmd('BufEnter', {
+  group = 'BufferManagement',
+  callback = function()
+    update_buffer_history()
+    
+    -- Count loaded buffers
+    local count = 0
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_get_option(buf, 'buflisted') then
+        local name = vim.api.nvim_buf_get_name(buf)
+        if name ~= '' and not name:match('BufferList$') then
+          count = count + 1
+        end
+      end
+    end
+    
+    if count > 1 then
+      show_buffer_list()
+    end
+    
+    update_buffer_list()
+  end
+})
+
+-- Function to cycle through valid buffers only (skip buffer list)
+function cycle_buffers(direction)
+  -- Get list of valid buffers (exclude buffer list)
+  local valid_buffers = {}
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_get_option(buf, 'buflisted') then
+      local name = vim.api.nvim_buf_get_name(buf)
+      if name ~= '' and not name:match('BufferList$') then
+        table.insert(valid_buffers, buf)
+      end
+    end
+  end
+  
+  if #valid_buffers <= 1 then
+    return -- Nothing to cycle through
+  end
+  
+  -- Find current buffer index
+  local current_buf = vim.fn.bufnr('%')
+  local current_index = nil
+  for i, buf in ipairs(valid_buffers) do
+    if buf == current_buf then
+      current_index = i
+      break
+    end
+  end
+  
+  if not current_index then
+    -- Current buffer not in list, go to first valid buffer
+    vim.cmd('buffer ' .. valid_buffers[1])
+    return
+  end
+  
+  -- Calculate next buffer index
+  local next_index = current_index + direction
+  if next_index > #valid_buffers then
+    next_index = 1
+  elseif next_index < 1 then
+    next_index = #valid_buffers
+  end
+  
+  -- Switch to next buffer
+  vim.cmd('buffer ' .. valid_buffers[next_index])
+end
+
+-- Add command to manually show buffer list
+vim.api.nvim_create_user_command('Buffers', show_buffer_list, {})
+
+-- Buffer navigation keybinds
 if vim.fn.has('nvim-0.7') == 1 then
   -- Modern nvim (0.7+) with vim.keymap.set
   vim.keymap.set('n', '<Tab>', function()
     vim.fn.system("tmux select-pane -t 0")
   end, { noremap = true, silent = true })
+  
+  -- Buffer switching with Ctrl+n/m (next/previous) - skip buffer list
+  vim.keymap.set('n', '<C-n>', function() cycle_buffers(1) end, { noremap = true, silent = true })
+  vim.keymap.set('n', '<C-m>', function() cycle_buffers(-1) end, { noremap = true, silent = true })
+  
+  -- Buffer switching with [ and ] (common vim pattern) - skip buffer list
+  vim.keymap.set('n', ']b', function() cycle_buffers(1) end, { noremap = true, silent = true })
+  vim.keymap.set('n', '[b', function() cycle_buffers(-1) end, { noremap = true, silent = true })
+  
+  -- Quick buffer list toggle with Ctrl+b
+  vim.keymap.set('n', '<C-b>', function()
+    -- Toggle buffer list visibility
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local buf = vim.api.nvim_win_get_buf(win)
+      if vim.api.nvim_buf_get_name(buf):match('BufferList$') then
+        vim.api.nvim_win_close(win, false)
+        return
+      end
+    end
+    show_buffer_list()
+  end, { noremap = true, silent = true })
+  
 else
   -- Older nvim versions
   vim.cmd('nnoremap <silent> <Tab> :lua vim.fn.system("tmux select-pane -t 0")<CR>')
+  vim.cmd('nnoremap <silent> <C-n> :lua cycle_buffers(1)<CR>')
+  vim.cmd('nnoremap <silent> <C-m> :lua cycle_buffers(-1)<CR>')
+  vim.cmd('nnoremap <silent> ]b :lua cycle_buffers(1)<CR>')
+  vim.cmd('nnoremap <silent> [b :lua cycle_buffers(-1)<CR>')
+  vim.cmd('nnoremap <silent> <C-b> :lua show_buffer_list()<CR>')
 end
 EOF
 
 # Start tmux session with ranger in the first pane
 tmux new-session -d -s ide "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'; tmux kill-session -t ide"
 tmux rename-window 'dev'
+
+# Enable mouse mode for better pane interaction
+tmux set-option -g mouse on
+tmux set-option -g focus-events on
 
 # Focus on ranger pane initially
 tmux select-pane -t 0
