@@ -42,11 +42,16 @@ cat > "$NVIM_TEMP/init.lua" <<'EOF'
 vim.cmd('silent! unmap <C-q>')
 vim.cmd('set t_ku=<Esc>[A')
 
-
--- Switch between panes with Tab
-vim.keymap.set('n', '<Tab>', function()
-  vim.fn.system("tmux select-pane -t 0")
-end, { noremap = true, silent = true })
+-- Switch between panes with Tab (version-aware)
+if vim.fn.has('nvim-0.7') == 1 then
+  -- Modern nvim (0.7+) with vim.keymap.set
+  vim.keymap.set('n', '<Tab>', function()
+    vim.fn.system("tmux select-pane -t 0")
+  end, { noremap = true, silent = true })
+else
+  -- Older nvim versions
+  vim.cmd('nnoremap <silent> <Tab> :lua vim.fn.system("tmux select-pane -t 0")<CR>')
+end
 EOF
 
 # Start tmux session with ranger in the first pane
