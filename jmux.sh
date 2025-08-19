@@ -12,6 +12,20 @@ CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}/jmux"
 RANGER_TEMP="$CONFIG_BASE/ranger_config"
 NVIM_TEMP="$CONFIG_BASE/nvim_config"
 
+# Load configuration
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/config.sh" ]; then
+    . "$SCRIPT_DIR/config.sh"
+else
+    # Default values if config not found
+    RANGER_FOCUSED_RATIO=40
+    NVIM_FOCUSED_RATIO=20
+fi
+
+# Export for use in subprocesses
+export RANGER_FOCUSED_RATIO
+export NVIM_FOCUSED_RATIO
+
 # Create config directories
 mkdir -p "$RANGER_TEMP" "$NVIM_TEMP" "$CONFIG_BASE/lazygit"
 
@@ -27,11 +41,15 @@ cd "$SEARCH_DIR"
 # Run fzf and open selected file in nvim
 SELECTED=$(fzf --preview "cat {}" --height=100%)
 if [ -n "$SELECTED" ]; then
-    # Check if nvim pane exists, create if not
+    # Check if nvim pane exists, create if not, then focus nvim with proper sizing
     if tmux list-panes | grep -q "1:"; then
         tmux send-keys -t 1 Escape ":e $(readlink -f "$SELECTED")" Enter
+        tmux select-pane -t 1
+        tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%
     else
         tmux split-window -h -p 60 "cd '$SEARCH_DIR' && nvim -u '$HOME/.config/jmux/nvim_config/init.lua' '$(readlink -f "$SELECTED")'"
+        tmux select-pane -t 1
+        tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%
     fi
 fi
 EOF
@@ -56,7 +74,11 @@ cat > "$CONFIG_BASE/git_file_breakdown.sh" <<'EOF'
 # Show file breakdown for commit
 hash=$(echo "$1" | sed -n 's/.*\([a-f0-9]\{7,\}\).*/\1/p' | head -1)
 if [ -n "$hash" ]; then
+    if command -v delta >/dev/null 2>&1; then
+    git show --color=always --stat --patch "$hash" | delta | less -R
+  else
     git show --color=always --stat --patch "$hash" | less -R
+  fi
 fi
 EOF
 
@@ -87,22 +109,22 @@ keybinding:
     quit-alt1: '<esc>'
 EOF
 
-# Ranger config
+# Ranger config - use envsubst to substitute variables
 cat > "$RANGER_TEMP/rc.conf" <<EOF
 # Hide preview panel
 set preview_files false
 set preview_directories false
 
-# Open files with Enter key - create nvim pane if needed, or open in existing buffer
-map <Enter> shell if tmux list-panes | grep -q "1:"; then tmux send-keys -t 1 Escape ":e \$(readlink -f %p)" Enter; else tmux split-window -h -p 60 "cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'"; fi
+# Open files with Enter key - create nvim pane if needed, or open in existing buffer, then focus nvim
+map <Enter> shell if tmux list-panes | grep -q "1:"; then tmux send-keys -t 1 Escape ":e \$(readlink -f %p)" Enter; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -h -p 60 "cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi
 unmap l
 unmap q
 # Disable right arrow from opening files - only allow directory navigation
 map <right> eval fm.cd(fm.thisfile.path) if fm.thisfile.is_directory else None
 
-# Switch between panes with Tab
-map <TAB> shell tmux select-pane -t 1
-map <S-TAB> shell tmux select-pane -t 0
+# Switch between panes with Tab and resize for focused app
+map <TAB> shell tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%
+map <S-TAB> shell tmux select-pane -t 0; tmux resize-pane -t 0 -x ${RANGER_FOCUSED_RATIO}%%
 
 # Open lazygit in popup with ;g - run in background to avoid terminal interference
 map ;g shell tmux display-popup -w 90%% -h 90%% -E 'XDG_CONFIG_HOME="$CONFIG_BASE" lazygit' &
@@ -463,7 +485,7 @@ end
 if vim.fn.has('nvim-0.7') == 1 then
   -- Modern nvim (0.7+) with vim.keymap.set
   vim.keymap.set('n', '<Tab>', function()
-    vim.fn.system("tmux select-pane -t 0")
+    vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")
   end, { noremap = true, silent = true })
   
   -- Buffer switching with Ctrl+n/m (next/previous) - skip buffer list
@@ -492,7 +514,7 @@ if vim.fn.has('nvim-0.7') == 1 then
   
 else
   -- Older nvim versions
-  vim.cmd('nnoremap <silent> <Tab> :lua vim.fn.system("tmux select-pane -t 0")<CR>')
+  vim.cmd('nnoremap <silent> <Tab> :lua vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")<CR>')
   vim.cmd('nnoremap <silent> <C-n> :lua cycle_buffers(1)<CR>')
   vim.cmd('nnoremap <silent> <C-m> :lua cycle_buffers(-1)<CR>')
   vim.cmd('nnoremap <silent> <C-p> :lua open_fuzzy_finder()<CR>')
