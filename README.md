@@ -20,25 +20,27 @@ jmux /path/to/project   # Start IDE in specific directory
 ## Keybindings
 
 **File Navigation**
-- `Enter` - Open file in nvim (creates pane if needed)
-- `Ctrl+P` - Fuzzy file finder (VSCode-style)
-- `Tab/Shift+Tab` - Switch between panes
+- `Enter` - Open file in nvim with automatic pane resizing (20-80 split)
+- `Right Arrow` - Directory navigation only (file opening disabled)
+- `Ctrl+P` - Fuzzy file finder with preview popup
+- `Tab` - Switch to nvim pane (20-80 split) 
+- `Shift+Tab` - Switch to ranger pane (40-60 split)
 
 **Buffer Management** (nvim)
-- `Ctrl+N/M` - Cycle through buffers  
-- `]b/[b` - Next/previous buffer
+- `Ctrl+N/M` - Cycle through buffers (next/previous)
+- `]b/[b` - Alternative buffer navigation
 - `Ctrl+B` - Toggle recent files panel
 - `:q` - Close buffer (or entire IDE if last buffer)
 
 **Git Integration**
-- `;g` - Lazygit popup (90% overlay, Esc to quit)
+- `;g` - Lazygit popup (90% overlay, Escape to quit)
 - `:gl` - Interactive git log with branch graph and commit previews
+- `Enter` (in git log) - View detailed file breakdown for selected commit
 
-**Visual Features**
-- Recent files panel with modification indicators (●)
-- Dynamic nvim pane creation
-- Mouse support throughout
-- Compatible with nvim 0.6.1+
+**Configuration**
+- Customize pane ratios via `config.sh`
+- RANGER_FOCUSED_RATIO=40 (default: 40% ranger, 60% nvim)
+- NVIM_FOCUSED_RATIO=20 (default: 20% ranger, 80% nvim)
 
 ## Uninstall
 
