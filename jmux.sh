@@ -27,7 +27,12 @@ cd "$SEARCH_DIR"
 # Run fzf and open selected file in nvim
 SELECTED=$(fzf --preview "cat {}" --height=100%)
 if [ -n "$SELECTED" ]; then
-    tmux send-keys -t 1 Escape ":e $(readlink -f "$SELECTED")" Enter
+    # Check if nvim pane exists, create if not
+    if tmux list-panes | grep -q "1:"; then
+        tmux send-keys -t 1 Escape ":e $(readlink -f "$SELECTED")" Enter
+    else
+        tmux split-window -h -p 60 "cd '$SEARCH_DIR' && nvim -u '$HOME/.config/jmux/nvim_config/init.lua' '$(readlink -f "$SELECTED")'"
+    fi
 fi
 EOF
 
