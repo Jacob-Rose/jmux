@@ -38,6 +38,47 @@ EOF
 
 chmod +x "$CONFIG_BASE/fuzzy_finder.sh"
 
+# Create git commit preview script
+cat > "$CONFIG_BASE/git_commit_preview.sh" <<'EOF'
+#!/bin/bash
+# Show commit message for git log viewer
+hash=$(echo "$1" | sed -n 's/.*\([a-f0-9]\{7,\}\).*/\1/p' | head -1)
+if [ -n "$hash" ]; then
+    git log -1 --pretty=format:"%B" --color=always "$hash"
+fi
+EOF
+
+chmod +x "$CONFIG_BASE/git_commit_preview.sh"
+
+# Create git file breakdown script
+cat > "$CONFIG_BASE/git_file_breakdown.sh" <<'EOF'
+#!/bin/bash
+# Show file breakdown for commit
+hash=$(echo "$1" | sed -n 's/.*\([a-f0-9]\{7,\}\).*/\1/p' | head -1)
+if [ -n "$hash" ]; then
+    git show --color=always --stat --patch "$hash" | less -R
+fi
+EOF
+
+chmod +x "$CONFIG_BASE/git_file_breakdown.sh"
+
+# Create main git log viewer script
+cat > "$CONFIG_BASE/git_log_viewer.sh" <<'EOF'
+#!/bin/bash
+# Interactive git log viewer for jmux
+CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}/jmux"
+
+git log --graph --all --decorate --color=always \
+    --pretty=format:"%C(yellow)%h%C(reset) - %C(cyan)%an%C(reset) %C(dim)%ar%C(reset)%C(auto)%d%C(reset) %s" | \
+fzf --ansi \
+    --preview="$CONFIG_BASE/git_commit_preview.sh {}" \
+    --preview-window=down:50%:wrap \
+    --bind="enter:execute($CONFIG_BASE/git_file_breakdown.sh {})" \
+    --bind="double-click:ignore"
+EOF
+
+chmod +x "$CONFIG_BASE/git_log_viewer.sh"
+
 # Create lazygit config to disable 'q' quit
 cat > "$CONFIG_BASE/lazygit/config.yml" <<'EOF'
 keybinding:
@@ -67,7 +108,7 @@ map <S-TAB> shell tmux select-pane -t 0
 map ;g shell tmux display-popup -w 90%% -h 90%% -E 'XDG_CONFIG_HOME="$CONFIG_BASE" lazygit' &
 
 # Open interactive git log with branch graph in popup with :gl
-alias gl shell tmux display-popup -w 90%% -h 90%% -E 'git log --graph --all --decorate --color=always --pretty=format:"%%C(yellow)%%h%%C(reset) - %%C(cyan)%%an%%C(reset) %%C(dim)%%ar%%C(reset)%%C(auto)%%d%%C(reset) %%s" | fzf --ansi --preview="echo {} | sed -n \"s/.*\\([a-f0-9]\\{7,\\}\\).*/\\1/p\" | head -1 | xargs -r git show --color=always" --preview-window=down:50%%:wrap --bind="enter:ignore" --bind="double-click:ignore"' &
+alias gl shell tmux display-popup -w 90%% -h 90%% -E '$CONFIG_BASE/git_log_viewer.sh' &
 
 # Fuzzy file finder with Ctrl+p (VSCode style) - use shared script
 map <C-p> shell tmux display-popup -w 80%% -h 60%% -E '$CONFIG_BASE/fuzzy_finder.sh "%d"' &
