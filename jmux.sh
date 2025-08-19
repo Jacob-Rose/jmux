@@ -527,11 +527,16 @@ chmod +x "$CONFIG_BASE/fuzzy_finder.sh" \
 tmux new-session -d -s ide "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'; tmux kill-session -t ide"
 tmux rename-window 'dev'
 
+# Pre-warm fzf in a hidden background window to avoid startup delay
+tmux new-window -t ide -n 'fzf-bg' -d
+tmux send-keys -t ide:fzf-bg "cd '$WORK_DIR'" Enter
+tmux send-keys -t ide:fzf-bg "find . -type f -not -path '*/.*' | fzf --preview 'cat {}' --height=100% >/dev/null 2>&1 || true" Enter
+
 # Enable mouse mode for better pane interaction
 tmux set-option -g mouse on
 tmux set-option -g focus-events on
 
-# Focus on ranger pane initially
+# Focus on ranger pane initially  
 tmux select-pane -t 0
 
 # Attach
