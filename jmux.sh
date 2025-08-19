@@ -290,26 +290,26 @@ vim.cmd([[
 -- Auto-create buffer list when second file is opened
 vim.api.nvim_create_augroup('BufferManagement', { clear = true })
 
+-- Create buffer list when nvim starts
+vim.api.nvim_create_autocmd('VimEnter', {
+  group = 'BufferManagement',
+  callback = function()
+    show_buffer_list()
+    update_buffer_list()
+  end
+})
+
+-- Only update buffer list on buffer enter (don't create)
 vim.api.nvim_create_autocmd('BufEnter', {
   group = 'BufferManagement',
   callback = function()
-    -- Don't update history on BufEnter, only show/update the list
-    
-    -- Count loaded buffers
-    local count = 0
-    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-      if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_get_option(buf, 'buflisted') then
-        local name = vim.api.nvim_buf_get_name(buf)
-        if name ~= '' and not name:match('BufferList$') then
-          count = count + 1
-        end
-      end
+    -- Skip if we're in the buffer list itself
+    local current_buf_name = vim.api.nvim_buf_get_name(0)
+    if current_buf_name:match('BufferList$') then
+      return
     end
     
-    if count > 1 then
-      show_buffer_list()
-    end
-    
+    -- Only update if buffer list exists
     update_buffer_list()
   end
 })
