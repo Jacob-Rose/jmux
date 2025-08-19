@@ -73,6 +73,37 @@ vim.opt.showtabline = 0
 -- Buffer management setup
 vim.g.buffer_history = {}
 
+-- Helper function to check if buffer is valid (not buffer list)
+function is_valid_buffer(buf)
+  if not vim.api.nvim_buf_is_loaded(buf) or not vim.api.nvim_buf_get_option(buf, 'buflisted') then
+    return false
+  end
+  local name = vim.api.nvim_buf_get_name(buf)
+  return name ~= '' and not name:match('BufferList$')
+end
+
+-- Helper function to get all valid buffers
+function get_valid_buffers()
+  local valid_buffers = {}
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if is_valid_buffer(buf) then
+      table.insert(valid_buffers, buf)
+    end
+  end
+  return valid_buffers
+end
+
+-- Helper function to find buffer list window
+function find_buffer_list_window()
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local buf = vim.api.nvim_win_get_buf(win)
+    if vim.api.nvim_buf_get_name(buf):match('BufferList$') then
+      return win
+    end
+  end
+  return nil
+end
+
 -- Function to update buffer history
 function update_buffer_history()
   local current_buf = vim.fn.bufnr('%')
@@ -100,11 +131,8 @@ end
 -- Show buffer list in vertical split
 function show_buffer_list()
   -- Check if buffer list window already exists
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local buf = vim.api.nvim_win_get_buf(win)
-    if vim.api.nvim_buf_get_name(buf):match('BufferList$') then
-      return -- Already exists
-    end
+  if find_buffer_list_window() then
+    return -- Already exists
   end
   
   -- Create vertical split for buffer list
@@ -137,16 +165,7 @@ end
 
 -- Update buffer list display
 function update_buffer_list()
-  -- Find buffer list window
-  local buflist_win = nil
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local buf = vim.api.nvim_win_get_buf(win)
-    if vim.api.nvim_buf_get_name(buf):match('BufferList$') then
-      buflist_win = win
-      break
-    end
-  end
-  
+  local buflist_win = find_buffer_list_window()
   if not buflist_win then return end
   
   local buflist_buf = vim.api.nvim_win_get_buf(buflist_win)
@@ -159,31 +178,23 @@ function update_buffer_list()
   
   -- Add buffers in history order
   for _, buf in ipairs(history) do
-    if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_get_option(buf, 'buflisted') then
-      local name = vim.api.nvim_buf_get_name(buf)
-      if name ~= '' and not name:match('BufferList$') then
-        table.insert(buffers, {buf = buf, name = name})
-      end
+    if is_valid_buffer(buf) then
+      table.insert(buffers, {buf = buf, name = vim.api.nvim_buf_get_name(buf)})
     end
   end
   
   -- Add any buffers not in history (fallback)
-  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_get_option(buf, 'buflisted') then
-      local name = vim.api.nvim_buf_get_name(buf)
-      if name ~= '' and not name:match('BufferList$') then
-        -- Check if already in buffers list
-        local already_added = false
-        for _, existing in ipairs(buffers) do
-          if existing.buf == buf then
-            already_added = true
-            break
-          end
-        end
-        if not already_added then
-          table.insert(buffers, {buf = buf, name = name})
-        end
+  for _, buf in ipairs(get_valid_buffers()) do
+    -- Check if already in buffers list
+    local already_added = false
+    for _, existing in ipairs(buffers) do
+      if existing.buf == buf then
+        already_added = true
+        break
       end
+    end
+    if not already_added then
+      table.insert(buffers, {buf = buf, name = vim.api.nvim_buf_get_name(buf)})
     end
   end
   
@@ -217,15 +228,7 @@ function goto_selected_buffer()
   local line = vim.fn.line('.')
   if line <= 2 then return end -- Skip header lines
   
-  local buffers = {}
-  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_get_option(buf, 'buflisted') then
-      local name = vim.api.nvim_buf_get_name(buf)
-      if name ~= '' and not name:match('BufferList$') then
-        table.insert(buffers, buf)
-      end
-    end
-  end
+  local buffers = get_valid_buffers()
   
   local selected_index = line - 2 -- Account for header
   if selected_index <= #buffers then
@@ -314,21 +317,16 @@ vim.api.nvim_create_autocmd('BufEnter', {
   end
 })
 
--- Move buffer to top of history when modified
-vim.api.nvim_create_autocmd('TextChanged', {
-  group = 'BufferManagement',
-  callback = function()
-    update_buffer_history()
-    update_buffer_list()
-  end
-})
+-- Shared callback for text changes
+local function on_text_changed()
+  update_buffer_history()
+  update_buffer_list()
+end
 
-vim.api.nvim_create_autocmd('TextChangedI', {
+-- Move buffer to top of history when modified
+vim.api.nvim_create_autocmd({'TextChanged', 'TextChangedI'}, {
   group = 'BufferManagement',
-  callback = function()
-    update_buffer_history()
-    update_buffer_list()
-  end
+  callback = on_text_changed
 })
 
 -- Update buffer list when file is saved (remove modified indicator)
@@ -344,16 +342,7 @@ vim.api.nvim_create_autocmd({'BufWritePost', 'BufWrite'}, {
 
 -- Function to cycle through valid buffers only (skip buffer list)
 function cycle_buffers(direction)
-  -- Get list of valid buffers (exclude buffer list)
-  local valid_buffers = {}
-  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_get_option(buf, 'buflisted') then
-      local name = vim.api.nvim_buf_get_name(buf)
-      if name ~= '' and not name:match('BufferList$') then
-        table.insert(valid_buffers, buf)
-      end
-    end
-  end
+  local valid_buffers = get_valid_buffers()
   
   if #valid_buffers <= 1 then
     return -- Nothing to cycle through
@@ -413,15 +402,12 @@ if vim.fn.has('nvim-0.7') == 1 then
   
   -- Quick buffer list toggle with Ctrl+b
   vim.keymap.set('n', '<C-b>', function()
-    -- Toggle buffer list visibility
-    for _, win in ipairs(vim.api.nvim_list_wins()) do
-      local buf = vim.api.nvim_win_get_buf(win)
-      if vim.api.nvim_buf_get_name(buf):match('BufferList$') then
-        vim.api.nvim_win_close(win, false)
-        return
-      end
+    local buflist_win = find_buffer_list_window()
+    if buflist_win then
+      vim.api.nvim_win_close(buflist_win, false)
+    else
+      show_buffer_list()
     end
-    show_buffer_list()
   end, { noremap = true, silent = true })
   
 else
