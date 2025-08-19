@@ -127,8 +127,8 @@ map <right> eval fm.cd(fm.thisfile.path) if fm.thisfile.is_directory else None
 map <TAB> shell tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%
 map <S-TAB> shell tmux select-pane -t 0; tmux resize-pane -t 0 -x ${RANGER_FOCUSED_RATIO}%%
 
-# Open lazygit in popup with ;g - run in background to avoid terminal interference
-map ;g shell tmux display-popup -w 90%% -h 90%% -E 'XDG_CONFIG_HOME="$CONFIG_BASE" lazygit' &
+# Open lazygit in popup with :g - run in background to avoid terminal interference
+alias g shell tmux display-popup -w 90%% -h 90%% -E 'XDG_CONFIG_HOME="$CONFIG_BASE" lazygit' &
 
 # Open interactive git log with branch graph in popup with :gl
 alias gl shell tmux display-popup -w 90%% -h 90%% -E '$CONFIG_BASE/git_log_viewer.sh' &

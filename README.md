@@ -33,7 +33,7 @@ jmux /path/to/project   # Start IDE in specific directory
 - `:q` - Close buffer (or entire IDE if last buffer)
 
 **Git Integration**
-- `;g` - Lazygit popup (90% overlay, Escape to quit)
+- `:g` - Lazygit popup (90% overlay, Escape to quit)
 - `:gl` - Interactive git log with branch graph and commit previews
 - `Enter` (in git log) - View detailed file breakdown for selected commit
 
