@@ -1,14 +1,6 @@
 # jmux
 
-A tmux-based IDE that combines ranger (file manager) and nvim (text editor) in a split-pane interface with integrated git workflow.
-
-## Features
-
-- **Split Interface**: 40% ranger file manager, 60% nvim editor
-- **Seamless File Opening**: Press Enter on files in ranger to open them in nvim
-- **Git Integration**: Lazygit popup overlay for version control
-- **Smart Navigation**: Tab switching between panes
-- **Auto-cleanup**: Session terminates when either application exits
+A tmux-based IDE combining ranger (file manager) and nvim (text editor) with integrated git workflow and buffer management.
 
 ## Installation
 
@@ -16,31 +8,37 @@ A tmux-based IDE that combines ranger (file manager) and nvim (text editor) in a
 sudo ./install.sh
 ```
 
-**Dependencies**: tmux, ranger, nvim, lazygit
+**Dependencies**: tmux, ranger, nvim, lazygit, fzf
 
 ## Usage
 
 ```bash
-jmux                    # Start IDE in current directory
+jmux                    # Start IDE in current directory  
 jmux /path/to/project   # Start IDE in specific directory
 ```
 
 ## Keybindings
 
-### Ranger (File Manager)
-- `Enter` - Open file in nvim
-- `Tab` - Switch to nvim pane
-- `Shift+Tab` - Switch back to ranger pane
-- `;g` - Open lazygit popup (90% screen overlay)
-- `→` - Enter directories only (no file opening)
+**File Navigation**
+- `Enter` - Open file in nvim (creates pane if needed)
+- `Ctrl+P` - Fuzzy file finder (VSCode-style)
+- `Tab/Shift+Tab` - Switch between panes
 
-### Nvim (Editor)
-- `Tab` - Switch to ranger pane
-- `:q` - Quit nvim (closes entire IDE)
+**Buffer Management** (nvim)
+- `Ctrl+N/M` - Cycle through buffers  
+- `]b/[b` - Next/previous buffer
+- `Ctrl+B` - Toggle recent files panel
+- `:q` - Close buffer (or entire IDE if last buffer)
 
-### Lazygit (Git Interface)
-- `q` - Close lazygit popup
-- Standard lazygit keybindings apply
+**Git Integration**
+- `;g` - Lazygit popup (90% overlay, Esc to quit)
+- `:gl` - Interactive git log with branch graph and commit previews
+
+**Visual Features**
+- Recent files panel with modification indicators (●)
+- Dynamic nvim pane creation
+- Mouse support throughout
+- Compatible with nvim 0.6.1+
 
 ## Uninstall
 
