@@ -377,7 +377,11 @@ function cycle_buffers(direction)
 end
 
 -- Add command to manually show buffer list
-vim.api.nvim_create_user_command('Buffers', show_buffer_list, {})
+if vim.fn.has('nvim-0.7') == 1 then
+  vim.api.nvim_create_user_command('Buffers', show_buffer_list, {})
+else
+  vim.cmd('command! Buffers lua show_buffer_list()')
+end
 
 -- Buffer navigation keybinds
 if vim.fn.has('nvim-0.7') == 1 then
@@ -418,7 +422,7 @@ else
   vim.cmd('nnoremap <silent> <C-p> :lua vim.fn.system("tmux display-popup -w 80%% -h 60%% -E \'' .. vim.fn.expand("$HOME/.config/jmux") .. '/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"\' &")<CR>')
   vim.cmd('nnoremap <silent> ]b :lua cycle_buffers(1)<CR>')
   vim.cmd('nnoremap <silent> [b :lua cycle_buffers(-1)<CR>')
-  vim.cmd('nnoremap <silent> <C-b> :lua show_buffer_list()<CR>')
+  vim.cmd('nnoremap <silent> <C-b> :lua if find_buffer_list_window() then vim.api.nvim_win_close(find_buffer_list_window(), false) else show_buffer_list() end<CR>')
 end
 EOF
 
