@@ -22,7 +22,7 @@ else
     NVIM_FOCUSED_RATIO=20
 fi
 
-# Export for use in subprocesses
+# Export variables for nvim environment access
 export RANGER_FOCUSED_RATIO
 export NVIM_FOCUSED_RATIO
 
@@ -54,8 +54,6 @@ if [ -n "$SELECTED" ]; then
 fi
 EOF
 
-chmod +x "$CONFIG_BASE/fuzzy_finder.sh"
-
 # Create git commit preview script
 cat > "$CONFIG_BASE/git_commit_preview.sh" <<'EOF'
 #!/bin/bash
@@ -65,8 +63,6 @@ if [ -n "$hash" ]; then
     git log -1 --pretty=format:"%B" --color=always "$hash"
 fi
 EOF
-
-chmod +x "$CONFIG_BASE/git_commit_preview.sh"
 
 # Create git file breakdown script
 cat > "$CONFIG_BASE/git_file_breakdown.sh" <<'EOF'
@@ -81,8 +77,6 @@ if [ -n "$hash" ]; then
   fi
 fi
 EOF
-
-chmod +x "$CONFIG_BASE/git_file_breakdown.sh"
 
 # Create main git log viewer script
 cat > "$CONFIG_BASE/git_log_viewer.sh" <<'EOF'
@@ -99,8 +93,6 @@ fzf --ansi \
     --bind="double-click:ignore"
 EOF
 
-chmod +x "$CONFIG_BASE/git_log_viewer.sh"
-
 # Create lazygit config to disable 'q' quit
 cat > "$CONFIG_BASE/lazygit/config.yml" <<'EOF'
 keybinding:
@@ -111,9 +103,18 @@ EOF
 
 # Ranger config - use envsubst to substitute variables
 cat > "$RANGER_TEMP/rc.conf" <<EOF
-# Hide preview panel
+# Hide preview panel completely
 set preview_files false
 set preview_directories false
+set show_hidden false
+
+# Use 3 columns with files taking most space
+set column_ratios 1,1,2
+
+# Prioritize filename over extension when truncating
+set dirname_in_tabs true
+set unicode_ellipsis true
+set show_selection_in_titlebar false
 
 # Open files with Enter key - create nvim pane if needed, or open in existing buffer, then focus nvim
 map <Enter> shell if tmux list-panes | grep -q "1:"; then tmux send-keys -t 1 Escape ":e \$(readlink -f %p)" Enter; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -h -p 60 "cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi
@@ -138,6 +139,9 @@ EOF
 
 # Nvim config
 cat > "$NVIM_TEMP/init.lua" <<'EOF'
+-- Check nvim version once at the start
+local modern_nvim = vim.fn.has('nvim-0.7') == 1
+
 -- Disable Ctrl+Q terminal control
 vim.cmd('silent! unmap <C-q>')
 vim.cmd('set t_ku=<Esc>[A')
@@ -369,8 +373,8 @@ vim.cmd([[
   endfunction
 ]])
 
--- Auto-create buffer list when second file is opened
-if vim.fn.has('nvim-0.7') == 1 then
+-- Auto-create buffer list and set up autocmds  
+if modern_nvim then
   vim.api.nvim_create_augroup('BufferManagement', { clear = true })
   
   -- Create buffer list when nvim starts
@@ -432,11 +436,6 @@ else
   ]])
 end
 
--- Function to open fuzzy finder
-function open_fuzzy_finder()
-  local config_base = vim.fn.expand("$HOME/.config/jmux")
-  vim.fn.system("tmux display-popup -w 80% -h 60% -E '" .. config_base .. "/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"' &")
-end
 
 -- Function to cycle through valid buffers only (skip buffer list)
 function cycle_buffers(direction)
@@ -475,14 +474,15 @@ function cycle_buffers(direction)
 end
 
 -- Add command to manually show buffer list
-if vim.fn.has('nvim-0.7') == 1 then
+if modern_nvim then
   vim.api.nvim_create_user_command('Buffers', show_buffer_list, {})
 else
   vim.cmd('command! Buffers lua show_buffer_list()')
 end
 
 -- Buffer navigation keybinds
-if vim.fn.has('nvim-0.7') == 1 then
+
+if modern_nvim then
   -- Modern nvim (0.7+) with vim.keymap.set
   vim.keymap.set('n', '<Tab>', function()
     vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")
@@ -498,10 +498,6 @@ if vim.fn.has('nvim-0.7') == 1 then
     vim.fn.system("tmux display-popup -w 80% -h 60% -E '" .. config_base .. "/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"' &")
   end, { noremap = true, silent = true })
   
-  -- Buffer switching with [ and ] (common vim pattern) - skip buffer list
-  vim.keymap.set('n', ']b', function() cycle_buffers(1) end, { noremap = true, silent = true })
-  vim.keymap.set('n', '[b', function() cycle_buffers(-1) end, { noremap = true, silent = true })
-  
   -- Quick buffer list toggle with Ctrl+b
   vim.keymap.set('n', '<C-b>', function()
     local buflist_win = find_buffer_list_window()
@@ -511,18 +507,21 @@ if vim.fn.has('nvim-0.7') == 1 then
       show_buffer_list()
     end
   end, { noremap = true, silent = true })
-  
 else
-  -- Older nvim versions
+  -- Older nvim versions  
   vim.cmd('nnoremap <silent> <Tab> :lua vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")<CR>')
   vim.cmd('nnoremap <silent> <C-n> :lua cycle_buffers(1)<CR>')
   vim.cmd('nnoremap <silent> <C-m> :lua cycle_buffers(-1)<CR>')
-  vim.cmd('nnoremap <silent> <C-p> :lua open_fuzzy_finder()<CR>')
-  vim.cmd('nnoremap <silent> ]b :lua cycle_buffers(1)<CR>')
-  vim.cmd('nnoremap <silent> [b :lua cycle_buffers(-1)<CR>')
+  vim.cmd([[nnoremap <silent> <C-p> :lua local config_base = vim.fn.expand("$HOME/.config/jmux"); vim.fn.system("tmux display-popup -w 80% -h 60% -E '" .. config_base .. "/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"'")<CR>]])
   vim.cmd('nnoremap <silent> <C-b> :lua if find_buffer_list_window() then vim.api.nvim_win_close(find_buffer_list_window(), false) else show_buffer_list() end<CR>')
 end
 EOF
+
+# Make all generated scripts executable
+chmod +x "$CONFIG_BASE/fuzzy_finder.sh" \
+          "$CONFIG_BASE/git_commit_preview.sh" \
+          "$CONFIG_BASE/git_file_breakdown.sh" \
+          "$CONFIG_BASE/git_log_viewer.sh"
 
 # Start tmux session with ranger in the first pane
 tmux new-session -d -s ide "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'; tmux kill-session -t ide"
