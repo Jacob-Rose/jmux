@@ -15,6 +15,24 @@ NVIM_TEMP="$CONFIG_BASE/nvim_config"
 # Create config directories
 mkdir -p "$RANGER_TEMP" "$NVIM_TEMP"
 
+# Create shared fuzzy finder script
+cat > "$CONFIG_BASE/fuzzy_finder.sh" <<'EOF'
+#!/bin/bash
+# Shared fuzzy file finder for jmux
+# Usage: fuzzy_finder.sh [directory]
+
+SEARCH_DIR="${1:-$(pwd)}"
+cd "$SEARCH_DIR"
+
+# Run fzf and open selected file in nvim
+SELECTED=$(fzf --preview "cat {}" --height=100%)
+if [ -n "$SELECTED" ]; then
+    tmux send-keys -t 1 Escape ":e $(readlink -f "$SELECTED")" Enter
+fi
+EOF
+
+chmod +x "$CONFIG_BASE/fuzzy_finder.sh"
+
 # Ranger config
 cat > "$RANGER_TEMP/rc.conf" <<EOF
 # Hide preview panel
@@ -34,6 +52,9 @@ map <S-TAB> shell tmux select-pane -t 0
 
 # Open lazygit in popup with ;g - run in background to avoid terminal interference
 map ;g shell tmux display-popup -w 90%% -h 90%% -E lazygit &
+
+# Fuzzy file finder with Ctrl+p (VSCode style) - use shared script
+map <C-p> shell tmux display-popup -w 80%% -h 60%% -E '$CONFIG_BASE/fuzzy_finder.sh "%d"' &
 EOF
 
 # Nvim config
@@ -321,6 +342,12 @@ if vim.fn.has('nvim-0.7') == 1 then
   vim.keymap.set('n', '<C-n>', function() cycle_buffers(1) end, { noremap = true, silent = true })
   vim.keymap.set('n', '<C-m>', function() cycle_buffers(-1) end, { noremap = true, silent = true })
   
+  -- Fuzzy file finder with Ctrl+p (VSCode style) - use shared script
+  vim.keymap.set('n', '<C-p>', function()
+    local config_base = vim.fn.expand("$HOME/.config/jmux")
+    vim.fn.system("tmux display-popup -w 80% -h 60% -E '" .. config_base .. "/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"' &")
+  end, { noremap = true, silent = true })
+  
   -- Buffer switching with [ and ] (common vim pattern) - skip buffer list
   vim.keymap.set('n', ']b', function() cycle_buffers(1) end, { noremap = true, silent = true })
   vim.keymap.set('n', '[b', function() cycle_buffers(-1) end, { noremap = true, silent = true })
@@ -343,6 +370,7 @@ else
   vim.cmd('nnoremap <silent> <Tab> :lua vim.fn.system("tmux select-pane -t 0")<CR>')
   vim.cmd('nnoremap <silent> <C-n> :lua cycle_buffers(1)<CR>')
   vim.cmd('nnoremap <silent> <C-m> :lua cycle_buffers(-1)<CR>')
+  vim.cmd('nnoremap <silent> <C-p> :lua vim.fn.system("tmux display-popup -w 80%% -h 60%% -E \'' .. vim.fn.expand("$HOME/.config/jmux") .. '/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"\' &")<CR>')
   vim.cmd('nnoremap <silent> ]b :lua cycle_buffers(1)<CR>')
   vim.cmd('nnoremap <silent> [b :lua cycle_buffers(-1)<CR>')
   vim.cmd('nnoremap <silent> <C-b> :lua show_buffer_list()<CR>')
