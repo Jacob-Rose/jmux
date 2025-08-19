@@ -54,6 +54,16 @@ else
     exit 1
 fi
 
+# Check fzf
+echo "Testing fzf..."
+if fzf --version; then
+    echo "fzf is working"
+else
+    echo "Error: fzf is required but not working."
+    echo "fzf exit code: $?"
+    exit 1
+fi
+
 # Create config directory
 echo "Creating config directory at $CONFIG_DIR..."
 mkdir -p "$CONFIG_DIR"
