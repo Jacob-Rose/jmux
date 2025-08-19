@@ -13,7 +13,7 @@ RANGER_TEMP="$CONFIG_BASE/ranger_config"
 NVIM_TEMP="$CONFIG_BASE/nvim_config"
 
 # Create config directories
-mkdir -p "$RANGER_TEMP" "$NVIM_TEMP"
+mkdir -p "$RANGER_TEMP" "$NVIM_TEMP" "$CONFIG_BASE/lazygit"
 
 # Create shared fuzzy finder script
 cat > "$CONFIG_BASE/fuzzy_finder.sh" <<'EOF'
@@ -38,6 +38,14 @@ EOF
 
 chmod +x "$CONFIG_BASE/fuzzy_finder.sh"
 
+# Create lazygit config to disable 'q' quit
+cat > "$CONFIG_BASE/lazygit/config.yml" <<'EOF'
+keybinding:
+  universal:
+    quit: '<disabled>'
+    quit-alt1: '<esc>'
+EOF
+
 # Ranger config
 cat > "$RANGER_TEMP/rc.conf" <<EOF
 # Hide preview panel
@@ -56,7 +64,10 @@ map <TAB> shell tmux select-pane -t 1
 map <S-TAB> shell tmux select-pane -t 0
 
 # Open lazygit in popup with ;g - run in background to avoid terminal interference
-map ;g shell tmux display-popup -w 90%% -h 90%% -E lazygit &
+map ;g shell tmux display-popup -w 90%% -h 90%% -E 'XDG_CONFIG_HOME="$CONFIG_BASE" lazygit' &
+
+# Open interactive git log with branch graph in popup with :gl
+alias gl shell tmux display-popup -w 90%% -h 90%% -E 'git log --graph --all --decorate --color=always --pretty=format:"%%C(yellow)%%h%%C(reset) - %%C(cyan)%%an%%C(reset) %%C(dim)%%ar%%C(reset)%%C(auto)%%d%%C(reset) %%s" | fzf --ansi --preview="echo {} | sed -n \"s/.*\\([a-f0-9]\\{7,\\}\\).*/\\1/p\" | head -1 | xargs -r git show --color=always" --preview-window=down:50%%:wrap --bind="enter:ignore" --bind="double-click:ignore"' &
 
 # Fuzzy file finder with Ctrl+p (VSCode style) - use shared script
 map <C-p> shell tmux display-popup -w 80%% -h 60%% -E '$CONFIG_BASE/fuzzy_finder.sh "%d"' &
