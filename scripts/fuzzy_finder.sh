@@ -5,8 +5,13 @@
 SEARCH_DIR="${1:-$(pwd)}"
 cd "$SEARCH_DIR"
 
-# Run fzf and open selected file in nvim
-SELECTED=$(fzf --preview "cat {}" --height=100%)
+# Use cached file list if available, otherwise fallback to find
+if [ -f "/tmp/jmux_files_cache" ]; then
+    SELECTED=$(cat /tmp/jmux_files_cache | fzf --preview "cat {}" --height=100%)
+else
+    SELECTED=$(find . -type f -not -path '*/.*' | fzf --preview "cat {}" --height=100%)
+fi
+
 if [ -n "$SELECTED" ]; then
     # Check if nvim pane exists, create if not, then focus nvim with proper sizing
     if tmux list-panes | grep -q "1:"; then

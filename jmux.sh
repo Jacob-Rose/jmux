@@ -210,10 +210,10 @@ chmod +x "$CONFIG_BASE"/*.sh
 tmux new-session -d -s ide "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'; tmux kill-session -t ide"
 tmux rename-window 'dev'
 
-# Pre-warm fzf in a hidden background window to avoid startup delay
-tmux new-window -t ide -n 'fzf-bg' -d
-tmux send-keys -t ide:fzf-bg "cd '$WORK_DIR'" Enter
-tmux send-keys -t ide:fzf-bg "find . -type f -not -path '*/.*' | fzf --preview 'cat {}' --height=100% >/dev/null 2>&1 || true" Enter
+# Pre-warm fzf by creating persistent file list cache
+tmux new-window -t ide -n 'fzf-cache' -d
+tmux send-keys -t ide:fzf-cache "cd '$WORK_DIR'" Enter
+tmux send-keys -t ide:fzf-cache "while true; do find . -type f -not -path '*/.*' | sed 's|^\./||' > /tmp/jmux_files_cache 2>/dev/null; sleep 5; done" Enter
 
 # Enable mouse mode for better pane interaction
 tmux set-option -g mouse on
