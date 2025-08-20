@@ -88,7 +88,7 @@ alias g shell tmux display-popup -w 90%% -h 90%% -E 'XDG_CONFIG_HOME="$CONFIG_BA
 # Open interactive git log with branch graph in popup with :gl
 alias gl shell tmux display-popup -w 90%% -h 90%% -E '$CONFIG_BASE/git_log_viewer.sh' &
 
-# Fuzzy file finder with Ctrl+p (VSCode style) - use shared script
+# Fuzzy file finder with Ctrl+p (VSCode style) - use cached file list
 map <C-p> shell tmux display-popup -w 80%% -h 60%% -E '$CONFIG_BASE/fuzzy_finder.sh "%d"' &
 EOF
 
@@ -178,7 +178,7 @@ if modern_nvim then
   vim.keymap.set('n', '<C-n>', function() cycle_buffers(1) end, { noremap = true, silent = true })
   vim.keymap.set('n', '<C-m>', function() cycle_buffers(-1) end, { noremap = true, silent = true })
   
-  -- Fuzzy file finder with Ctrl+p (VSCode style) - use shared script
+  -- Fuzzy file finder with Ctrl+p (VSCode style) - use cached file list
   vim.keymap.set('n', '<C-p>', function()
     local config_base = vim.fn.expand("$HOME/.config/jmux")
     vim.fn.system("tmux display-popup -w 80% -h 60% -E '" .. config_base .. "/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"' &")
@@ -210,10 +210,10 @@ chmod +x "$CONFIG_BASE"/*.sh
 tmux new-session -d -s ide "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'; tmux kill-session -t ide"
 tmux rename-window 'dev'
 
-# Pre-warm fzf by creating persistent file list cache
+# Pre-cache file list for faster fzf startup
 tmux new-window -t ide -n 'fzf-cache' -d
 tmux send-keys -t ide:fzf-cache "cd '$WORK_DIR'" Enter
-tmux send-keys -t ide:fzf-cache "while true; do find . -type f -not -path '*/.*' | sed 's|^\./||' > /tmp/jmux_files_cache 2>/dev/null; sleep 5; done" Enter
+tmux send-keys -t ide:fzf-cache "while true; do find . -type f -not -path '*/.*' | sed 's|^\./||' > /tmp/jmux_files_cache 2>/dev/null; sleep 10; done" Enter
 
 # Enable mouse mode for better pane interaction
 tmux set-option -g mouse on
