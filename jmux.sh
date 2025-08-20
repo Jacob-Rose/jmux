@@ -46,11 +46,12 @@ fi
 # Copy buffer management script
 cp "$SCRIPTS_SOURCE/buffer_manager.lua" "$CONFIG_BASE/"
 
-# Copy git scripts
+# Copy all scripts
 cp "$SCRIPTS_SOURCE/fuzzy_finder.sh" "$CONFIG_BASE/"
 cp "$SCRIPTS_SOURCE/git_commit_preview.sh" "$CONFIG_BASE/"
 cp "$SCRIPTS_SOURCE/git_file_breakdown.sh" "$CONFIG_BASE/"
 cp "$SCRIPTS_SOURCE/git_log_viewer.sh" "$CONFIG_BASE/"
+cp "$SCRIPTS_SOURCE/settings_menu.sh" "$CONFIG_BASE/"
 
 # Copy lazygit config
 mkdir -p "$CONFIG_BASE/lazygit"
@@ -90,12 +91,30 @@ alias gl shell tmux display-popup -w 90%% -h 90%% -E '$CONFIG_BASE/git_log_viewe
 
 # Fuzzy file finder with Ctrl+p (VSCode style) - use cached file list
 map <C-p> shell tmux display-popup -w 80%% -h 60%% -E '$CONFIG_BASE/fuzzy_finder.sh "%d"' &
+
+# Settings menu with :s  
+alias s shell tmux display-popup -w 60%% -h 70%% -E "$CONFIG_BASE/settings_menu.sh"
 EOF
 
 # Nvim config
 cat > "$NVIM_TEMP/init.lua" <<'EOF'
 -- Load modular buffer management
 dofile(vim.fn.expand('$HOME/.config/jmux/buffer_manager.lua'))
+
+-- Load saved theme from settings
+local settings_file = vim.fn.expand('$HOME/.config/jmux/settings')
+if vim.fn.filereadable(settings_file) == 1 then
+    local settings = {}
+    for line in io.lines(settings_file) do
+        local key, value = line:match('(%w+)="([^"]*)"')
+        if key and value then
+            settings[key] = value
+        end
+    end
+    if settings.JMUX_THEME then
+        vim.cmd('colorscheme ' .. settings.JMUX_THEME)
+    end
+end
 
 -- Check nvim version once at the start
 local modern_nvim = vim.fn.has('nvim-0.7') == 1
