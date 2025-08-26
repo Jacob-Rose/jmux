@@ -2,42 +2,112 @@
 
 # jmux: A tmux-based IDE with ranger and nvim
 # Usage: jmux [directory]
+#
+# Cleanup: If sessions become orphaned, run:
+#   ./cleanup_jmux_sessions.sh
+#
+# The script includes comprehensive cleanup on exit, but in extreme cases
+# (system crashes, kill -9, etc.) manual cleanup may be needed.
 
 # Set working directory (use argument or current directory)
 WORK_DIR="${1:-$(pwd)}"
 WORK_DIR="$(cd "$WORK_DIR" && pwd)"  # Get absolute path
 
-# Cleanup function to kill tmux session and all children
+# Check for stale jmux sessions and offer to clean them up
+check_stale_sessions() {
+    local stale_sessions="$(tmux list-sessions 2>/dev/null | grep "^ide:" || true)"
+    if [ -n "$stale_sessions" ]; then
+        echo "Warning: Found existing jmux session(s):"
+        echo "$stale_sessions"
+        echo ""
+        read -p "Clean up existing session(s)? [y/N]: " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            tmux kill-session -t ide 2>/dev/null || true
+            echo "Existing session cleaned up."
+        else
+            echo "Proceeding with existing session (may cause conflicts)..."
+        fi
+    fi
+}
+
+# Only check for stale sessions in interactive mode
+if [ -t 0 ]; then
+    check_stale_sessions
+fi
+
+# Store session info for cleanup tracking
+JMUX_SESSION_ID="jmux-$$"  # Use PID for unique session ID
+JMUX_PID_FILE="/tmp/jmux_session_$$.pid"
+
+# Comprehensive cleanup function 
 cleanup() {
-    echo ""
-    echo "Cleaning up jmux session..."
+    local exit_code=${1:-0}
+    local cleanup_reason="${2:-normal}"
     
-    # Kill any background cache process
-    if [ -f /tmp/jmux_cache_pid ]; then
+    # Prevent multiple cleanup calls
+    if [ -f "/tmp/jmux_cleanup_$$" ]; then
+        return 0
+    fi
+    touch "/tmp/jmux_cleanup_$$"
+    
+    echo ""
+    echo "Cleaning up jmux session (reason: $cleanup_reason)..."
+    
+    # Kill any background cache process by PID
+    if [ -f "/tmp/jmux_cache_pid" ]; then
         local cache_pid="$(cat /tmp/jmux_cache_pid 2>/dev/null)"
-        if [ -n "$cache_pid" ]; then
+        if [ -n "$cache_pid" ] && kill -0 "$cache_pid" 2>/dev/null; then
             kill "$cache_pid" 2>/dev/null || true
+            # Wait a moment for graceful shutdown
+            sleep 0.1
+            kill -9 "$cache_pid" 2>/dev/null || true
         fi
         rm -f /tmp/jmux_cache_pid
     fi
     
-    # Kill any remaining find processes for file caching
-    pkill -f "find.*jmux_files_cache" 2>/dev/null || true
+    # Kill any remaining find processes for file caching (more specific pattern)
+    pkill -f "jmux_files_cache" 2>/dev/null || true
     
-    # Kill the IDE session and all its windows/panes
+    # Force kill any remaining tmux sessions that might be orphaned
+    # First try graceful shutdown
     if tmux has-session -t ide 2>/dev/null; then
-        tmux kill-session -t ide
+        tmux kill-session -t ide 2>/dev/null || true
     fi
     
-    # Clean up cache files
-    rm -f /tmp/jmux_files_cache
+    # Also check for any sessions with our PID pattern
+    if tmux has-session -t "$JMUX_SESSION_ID" 2>/dev/null; then
+        tmux kill-session -t "$JMUX_SESSION_ID" 2>/dev/null || true
+    fi
     
-    echo "jmux session closed."
-    exit 0
+    # Nuclear option: kill any tmux processes that might be stuck
+    local tmux_pids="$(pgrep -f "tmux.*ide" 2>/dev/null || true)"
+    if [ -n "$tmux_pids" ]; then
+        echo "$tmux_pids" | xargs kill 2>/dev/null || true
+        sleep 0.1
+        echo "$tmux_pids" | xargs kill -9 2>/dev/null || true
+    fi
+    
+    # Clean up all cache files and lock files
+    rm -f /tmp/jmux_files_cache /tmp/jmux_cache_pid /tmp/jmux_main_pid
+    rm -f "$JMUX_PID_FILE" "/tmp/jmux_cleanup_$$"
+    rm -f /tmp/jmux_session_*.pid 2>/dev/null || true
+    rm -f /tmp/jmux_cache_script_*.sh 2>/dev/null || true
+    
+    echo "jmux session cleaned up successfully."
+    exit "$exit_code"
 }
 
-# Set up signal traps for proper cleanup
-trap cleanup INT TERM EXIT
+# Enhanced signal traps for comprehensive cleanup
+trap 'cleanup 130 "SIGINT"' INT       # Ctrl+C
+trap 'cleanup 143 "SIGTERM"' TERM     # Termination signal
+trap 'cleanup 1 "SIGHUP"' HUP         # Hangup (terminal closed)
+trap 'cleanup 2 "SIGQUIT"' QUIT       # Quit signal
+trap 'cleanup 0 "EXIT"' EXIT          # Normal exit
+
+# Create PID file for tracking
+echo "$$" > "$JMUX_PID_FILE"
+echo "$$" > "/tmp/jmux_main_pid"
 
 # Configuration paths
 CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}/jmux"
@@ -110,8 +180,7 @@ set show_selection_in_titlebar false
 # Open files with Enter key - create nvim pane if needed, or open in existing buffer, then focus nvim
 map <Enter> shell if tmux list-panes -t ide:dev | grep -q "1:"; then tmux send-keys -t ide:dev.1 Escape ":lua open_file_in_main_editor('\$(readlink -f %p)')" Enter; tmux select-window -t ide:dev; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -t ide:dev -h -p 60 "cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi
 unmap l
-# Map q to quit ranger and kill the entire jmux session
-map q shell tmux kill-session -t ide
+# Let q work normally (quit ranger), wrapper will handle cleanup
 # Disable right arrow from opening files - only allow directory navigation
 map <right> eval fm.cd(fm.thisfile.path) if fm.thisfile.is_directory else None
 
@@ -131,8 +200,7 @@ map <C-p> shell tmux display-popup -w 80%% -h 60%% -E '$CONFIG_BASE/fuzzy_finder
 # Settings menu with :s  
 alias s shell tmux display-popup -w 60%% -h 70%% -E "$CONFIG_BASE/settings_menu.sh" &
 
-# Quit jmux entirely with :q
-alias quit shell tmux kill-session -t ide
+# :quit will work normally, wrapper handles cleanup
 EOF
 
 # Apply saved settings to ranger config
@@ -287,20 +355,60 @@ EOF
 # Make all copied scripts executable
 chmod +x "$CONFIG_BASE"/*.sh
 
-# Kill existing session if it exists
-if tmux has-session -t ide 2>/dev/null; then
-    tmux kill-session -t ide
-fi
+# Clean up any existing sessions before starting
+cleanup_existing_sessions() {
+    # Kill any existing IDE sessions
+    tmux kill-session -t ide 2>/dev/null || true
+    tmux kill-session -t "$JMUX_SESSION_ID" 2>/dev/null || true
+    
+    # Clean up any orphaned jmux processes
+    pkill -f "jmux_files_cache" 2>/dev/null || true
+    
+    # Clean up old PID files (older than 1 hour)
+    find /tmp -name "jmux_session_*.pid" -mmin +60 -delete 2>/dev/null || true
+}
 
-# Start tmux session with ranger in the first pane - exit when ranger exits
-tmux new-session -d -s ide "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'; tmux kill-session -t ide"
+cleanup_existing_sessions
+
+# Create a wrapper script that ensures cleanup on ranger exit
+cat > "/tmp/jmux_wrapper_$$.sh" << 'WRAPPER_EOF'
+#!/bin/bash
+cleanup_on_exit() {
+    echo "Ranger exited, cleaning up..."
+    tmux kill-session -t ide 2>/dev/null || true
+    pkill -f "jmux_files_cache" 2>/dev/null || true
+    rm -f /tmp/jmux_* 2>/dev/null || true
+    exit 0
+}
+trap cleanup_on_exit EXIT INT TERM
+WRAPPER_EOF
+
+echo "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'" >> "/tmp/jmux_wrapper_$$.sh"
+chmod +x "/tmp/jmux_wrapper_$$.sh"
+
+# Start tmux session with the wrapper
+tmux new-session -d -s ide "bash /tmp/jmux_wrapper_$$.sh"
 tmux rename-window 'dev'
 
-# Pre-cache file list for faster fzf startup
+# Pre-cache file list for faster fzf startup with parent process monitoring
 if ! tmux list-windows -t ide | grep -q 'fzf-cache'; then
     tmux new-window -t ide -n 'fzf-cache' -d
     tmux send-keys -t ide:fzf-cache "cd '$WORK_DIR'" Enter
-    tmux send-keys -t ide:fzf-cache "echo \$\$ > /tmp/jmux_cache_pid; while true; do find . -type f -not -path '*/.*' | sed 's|^\./||' > /tmp/jmux_files_cache 2>/dev/null; sleep 10; done" Enter
+    # Create cache script with proper PID tracking
+    cat > "/tmp/jmux_cache_script_$$.sh" << EOF
+#!/bin/bash
+PARENT_PID=$$
+echo \$\$ > /tmp/jmux_cache_pid
+while kill -0 \$PARENT_PID 2>/dev/null; do 
+    find . -type f -not -path '*/.*' | sed 's|^\./||' > /tmp/jmux_files_cache 2>/dev/null
+    sleep 10
+done
+# Parent died, clean up and exit
+rm -f /tmp/jmux_cache_pid /tmp/jmux_files_cache /tmp/jmux_cache_script_$$.sh
+tmux kill-session -t ide 2>/dev/null || true
+EOF
+    chmod +x "/tmp/jmux_cache_script_$$.sh"
+    tmux send-keys -t ide:fzf-cache "bash /tmp/jmux_cache_script_$$.sh" Enter
 fi
 
 # Enable mouse mode for better pane interaction
