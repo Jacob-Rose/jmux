@@ -193,11 +193,10 @@ unmap l
 # Disable right arrow from opening files - only allow directory navigation
 map <right> eval fm.cd(fm.thisfile.path) if fm.thisfile.is_directory else None
 
-# Switch between panes with Ctrl+Tab and resize for focused app
-map <C-TAB> shell tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%
-map <C-S-TAB> shell tmux select-pane -t 0; tmux resize-pane -t 0 -x ${RANGER_FOCUSED_RATIO}%%
+# Switch between panes with Tab (toggle between ranger and nvim)
+map <TAB> shell tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%
 
-# Alternative pane switching keys (F1/F2) for terminals that don't support Ctrl+Tab
+# Alternative pane switching keys (F1/F2) for backup
 map <F1> shell tmux select-pane -t 0; tmux resize-pane -t 0 -x ${RANGER_FOCUSED_RATIO}%%
 map <F2> shell tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%
 
@@ -215,6 +214,9 @@ alias s shell tmux display-popup -w 60%% -h 70%% -E "$CONFIG_BASE/settings_menu.
 
 # Tabbed terminal with :t
 alias t shell tmux display-popup -w 90%% -h 80%% -E "$CONFIG_BASE/tabbed_terminal.sh '%d'"
+
+# Reload config with Ctrl+R (for settings changes)
+map <C-r> eval fm.source(fm.confpath('rc.conf'))
 
 # :quit will work normally, wrapper handles cleanup
 EOF
@@ -251,7 +253,7 @@ if [ "$AUTO_SWITCH_SETTING" = "true" ]; then
     echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; tmux select-window -t ide:dev; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi" >> "$RANGER_TEMP/rc.conf"
 else
     # Stay in ranger after opening file
-    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; fi" >> "$RANGER_TEMP/rc.conf"
+    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 0; fi" >> "$RANGER_TEMP/rc.conf"
 fi
 
 # Remove the placeholder line
@@ -350,7 +352,7 @@ setup_buffer_management()
 -- Buffer navigation keybinds
 if modern_nvim then
   -- Modern nvim (0.7+) with vim.keymap.set
-  vim.keymap.set('n', '<C-Tab>', function()
+  vim.keymap.set('n', '<Tab>', function()
     vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")
   end, { noremap = true, silent = true })
   
@@ -380,7 +382,7 @@ if modern_nvim then
   end, { noremap = true, silent = true })
 else
   -- Older nvim versions  
-  vim.cmd('nnoremap <silent> <C-Tab> :lua vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")<CR>')
+  vim.cmd('nnoremap <silent> <Tab> :lua vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")<CR>')
   vim.cmd('nnoremap <silent> <F1> :lua vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")<CR>')
   vim.cmd('nnoremap <silent> <C-n> :lua cycle_buffers(1)<CR>')
   vim.cmd('nnoremap <silent> <C-m> :lua cycle_buffers(-1)<CR>')

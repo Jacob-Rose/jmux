@@ -405,7 +405,7 @@ case $main_choice in
                 else
                     # Remove existing Enter mapping and add no-switch version
                     grep -v "^map <Enter>" "$RANGER_CONFIG" > "${RANGER_CONFIG}.tmp"
-                    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '\$HOME/.config/jmux/nvim_config/init.lua' '\$(readlink -f %p)'\"; fi" >> "${RANGER_CONFIG}.tmp"
+                    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '\$HOME/.config/jmux/nvim_config/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 0; fi" >> "${RANGER_CONFIG}.tmp"
                 fi
                 mv "${RANGER_CONFIG}.tmp" "$RANGER_CONFIG"
                 
