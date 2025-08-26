@@ -73,12 +73,23 @@ echo "Installing jmux to $INSTALL_DIR/$COMMAND_NAME..."
 sudo cp jmux.sh "$INSTALL_DIR/$COMMAND_NAME"
 sudo chmod +x "$INSTALL_DIR/$COMMAND_NAME"
 
+# Copy script files and dependencies alongside the main script
+echo "Installing script files..."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+sudo mkdir -p "$INSTALL_DIR/jmux-scripts"
+sudo mkdir -p "$INSTALL_DIR/jmux-config"
+sudo cp "$SCRIPT_DIR/scripts/"* "$INSTALL_DIR/jmux-scripts/"
+sudo cp "$SCRIPT_DIR/config/lazygit.yml" "$INSTALL_DIR/jmux-config/"
+sudo chmod +x "$INSTALL_DIR/jmux-scripts/"*.sh
+
 # Create uninstall script
 echo "Creating uninstall script..."
 cat > "$CONFIG_DIR/uninstall.sh" <<EOF
 #!/bin/bash
 echo "Uninstalling jmux..."
 sudo rm -f "$INSTALL_DIR/$COMMAND_NAME"
+sudo rm -rf "$INSTALL_DIR/jmux-scripts"
+sudo rm -rf "$INSTALL_DIR/jmux-config"
 rm -rf "$CONFIG_DIR"
 echo "jmux uninstalled successfully."
 EOF

@@ -34,7 +34,7 @@ jmux /path/to/project   # Start IDE in specific directory
 ### File Management
 - **Enter** in ranger: Opens files in nvim using `readlink -f` for absolute paths
 - **Right arrow**: Only enters directories, never opens files
-- **Tab/Shift+Tab**: Switch between ranger and nvim panes
+- **Ctrl+Tab/Ctrl+Shift+Tab** or **F2/F1**: Switch between ranger and nvim panes
 
 ### Git Integration  
 - **`;g`** in ranger: Opens lazygit in 90% screen popup overlay

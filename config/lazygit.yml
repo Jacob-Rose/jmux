@@ -1,0 +1,4 @@
+keybinding:
+  universal:
+    quit: '<disabled>'
+    quit-alt1: '<esc>'

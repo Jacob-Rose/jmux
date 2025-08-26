@@ -2,10 +2,119 @@
 
 # jmux: A tmux-based IDE with ranger and nvim
 # Usage: jmux [directory]
+#
+# Features:
+#   - File manager (ranger) with nvim integration
+#   - Git integration (:g for lazygit, :gl for git log)
+#   - Fuzzy file finder (Ctrl+P)
+#   - Settings menu (:s)  
+#   - Tabbed terminal (:t)
+#
+# Cleanup: If sessions become orphaned, run:
+#   ./cleanup_jmux_sessions.sh
+#
+# The script includes comprehensive cleanup on exit, but in extreme cases
+# (system crashes, kill -9, etc.) manual cleanup may be needed.
 
 # Set working directory (use argument or current directory)
 WORK_DIR="${1:-$(pwd)}"
 WORK_DIR="$(cd "$WORK_DIR" && pwd)"  # Get absolute path
+
+# Check for stale jmux sessions and offer to clean them up
+check_stale_sessions() {
+    local stale_sessions="$(tmux list-sessions 2>/dev/null | grep "^ide:" || true)"
+    if [ -n "$stale_sessions" ]; then
+        echo "Warning: Found existing jmux session(s):"
+        echo "$stale_sessions"
+        echo ""
+        read -p "Clean up existing session(s)? [y/N]: " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            tmux kill-session -t ide 2>/dev/null || true
+            echo "Existing session cleaned up."
+        else
+            echo "Proceeding with existing session (may cause conflicts)..."
+        fi
+    fi
+}
+
+# Only check for stale sessions in interactive mode
+if [ -t 0 ]; then
+    check_stale_sessions
+fi
+
+# Store session info for cleanup tracking
+JMUX_SESSION_ID="jmux-$$"  # Use PID for unique session ID
+JMUX_PID_FILE="/tmp/jmux_session_$$.pid"
+
+# Comprehensive cleanup function 
+cleanup() {
+    local exit_code=${1:-0}
+    local cleanup_reason="${2:-normal}"
+    
+    # Prevent multiple cleanup calls
+    if [ -f "/tmp/jmux_cleanup_$$" ]; then
+        return 0
+    fi
+    touch "/tmp/jmux_cleanup_$$"
+    
+    echo ""
+    echo "Cleaning up jmux session (reason: $cleanup_reason)..."
+    
+    # Kill any background cache process by PID
+    if [ -f "/tmp/jmux_cache_pid" ]; then
+        local cache_pid="$(cat /tmp/jmux_cache_pid 2>/dev/null)"
+        if [ -n "$cache_pid" ] && kill -0 "$cache_pid" 2>/dev/null; then
+            kill "$cache_pid" 2>/dev/null || true
+            # Wait a moment for graceful shutdown
+            sleep 0.1
+            kill -9 "$cache_pid" 2>/dev/null || true
+        fi
+        rm -f /tmp/jmux_cache_pid
+    fi
+    
+    # Kill any remaining find processes for file caching (more specific pattern)
+    pkill -f "jmux_files_cache" 2>/dev/null || true
+    
+    # Force kill any remaining tmux sessions that might be orphaned
+    # First try graceful shutdown
+    if tmux has-session -t ide 2>/dev/null; then
+        tmux kill-session -t ide 2>/dev/null || true
+    fi
+    
+    # Also check for any sessions with our PID pattern
+    if tmux has-session -t "$JMUX_SESSION_ID" 2>/dev/null; then
+        tmux kill-session -t "$JMUX_SESSION_ID" 2>/dev/null || true
+    fi
+    
+    # Nuclear option: kill any tmux processes that might be stuck
+    local tmux_pids="$(pgrep -f "tmux.*ide" 2>/dev/null || true)"
+    if [ -n "$tmux_pids" ]; then
+        echo "$tmux_pids" | xargs kill 2>/dev/null || true
+        sleep 0.1
+        echo "$tmux_pids" | xargs kill -9 2>/dev/null || true
+    fi
+    
+    # Clean up all cache files and lock files
+    rm -f /tmp/jmux_files_cache /tmp/jmux_cache_pid /tmp/jmux_main_pid
+    rm -f "$JMUX_PID_FILE" "/tmp/jmux_cleanup_$$"
+    rm -f /tmp/jmux_session_*.pid 2>/dev/null || true
+    rm -f /tmp/jmux_cache_script_*.sh 2>/dev/null || true
+    
+    echo "jmux session cleaned up successfully."
+    exit "$exit_code"
+}
+
+# Enhanced signal traps for comprehensive cleanup
+trap 'cleanup 130 "SIGINT"' INT       # Ctrl+C
+trap 'cleanup 143 "SIGTERM"' TERM     # Termination signal
+trap 'cleanup 1 "SIGHUP"' HUP         # Hangup (terminal closed)
+trap 'cleanup 2 "SIGQUIT"' QUIT       # Quit signal
+trap 'cleanup 0 "EXIT"' EXIT          # Normal exit
+
+# Create PID file for tracking
+echo "$$" > "$JMUX_PID_FILE"
+echo "$$" > "/tmp/jmux_main_pid"
 
 # Configuration paths
 CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}/jmux"
@@ -29,77 +138,34 @@ export NVIM_FOCUSED_RATIO
 # Create config directories
 mkdir -p "$RANGER_TEMP" "$NVIM_TEMP" "$CONFIG_BASE/lazygit"
 
-# Create shared fuzzy finder script
-cat > "$CONFIG_BASE/fuzzy_finder.sh" <<'EOF'
-#!/bin/bash
-# Shared fuzzy file finder for jmux
-# Usage: fuzzy_finder.sh [directory]
+# Copy script files from the jmux installation
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-SEARCH_DIR="${1:-$(pwd)}"
-cd "$SEARCH_DIR"
-
-# Run fzf and open selected file in nvim
-SELECTED=$(fzf --preview "cat {}" --height=100%)
-if [ -n "$SELECTED" ]; then
-    # Check if nvim pane exists, create if not, then focus nvim with proper sizing
-    if tmux list-panes | grep -q "1:"; then
-        tmux send-keys -t 1 Escape ":e $(readlink -f "$SELECTED")" Enter
-        tmux select-pane -t 1
-        tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%
-    else
-        tmux split-window -h -p 60 "cd '$SEARCH_DIR' && nvim -u '$HOME/.config/jmux/nvim_config/init.lua' '$(readlink -f "$SELECTED")'"
-        tmux select-pane -t 1
-        tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%
-    fi
+# Check if running from installed location or development location
+if [ -d "$SCRIPT_DIR/jmux-scripts" ]; then
+    # Running from installed location (/usr/local/bin)
+    SCRIPTS_SOURCE="$SCRIPT_DIR/jmux-scripts"
+    CONFIG_SOURCE="$SCRIPT_DIR/jmux-config"
+else
+    # Running from development location
+    SCRIPTS_SOURCE="$SCRIPT_DIR/scripts"
+    CONFIG_SOURCE="$SCRIPT_DIR/config"
 fi
-EOF
 
-# Create git commit preview script
-cat > "$CONFIG_BASE/git_commit_preview.sh" <<'EOF'
-#!/bin/bash
-# Show commit message for git log viewer
-hash=$(echo "$1" | sed -n 's/.*\([a-f0-9]\{7,\}\).*/\1/p' | head -1)
-if [ -n "$hash" ]; then
-    git log -1 --pretty=format:"%B" --color=always "$hash"
-fi
-EOF
+# Copy buffer management script
+cp "$SCRIPTS_SOURCE/buffer_manager.lua" "$CONFIG_BASE/"
 
-# Create git file breakdown script
-cat > "$CONFIG_BASE/git_file_breakdown.sh" <<'EOF'
-#!/bin/bash
-# Show file breakdown for commit
-hash=$(echo "$1" | sed -n 's/.*\([a-f0-9]\{7,\}\).*/\1/p' | head -1)
-if [ -n "$hash" ]; then
-    if command -v delta >/dev/null 2>&1; then
-    git show --color=always --stat --patch "$hash" | delta | less -R
-  else
-    git show --color=always --stat --patch "$hash" | less -R
-  fi
-fi
-EOF
+# Copy all scripts
+cp "$SCRIPTS_SOURCE/fuzzy_finder.sh" "$CONFIG_BASE/"
+cp "$SCRIPTS_SOURCE/git_commit_preview.sh" "$CONFIG_BASE/"
+cp "$SCRIPTS_SOURCE/git_file_breakdown.sh" "$CONFIG_BASE/"
+cp "$SCRIPTS_SOURCE/git_log_viewer.sh" "$CONFIG_BASE/"
+cp "$SCRIPTS_SOURCE/settings_menu.sh" "$CONFIG_BASE/"
+cp "$SCRIPTS_SOURCE/tabbed_terminal.sh" "$CONFIG_BASE/"
 
-# Create main git log viewer script
-cat > "$CONFIG_BASE/git_log_viewer.sh" <<'EOF'
-#!/bin/bash
-# Interactive git log viewer for jmux
-CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}/jmux"
-
-git log --graph --all --decorate --color=always \
-    --pretty=format:"%C(yellow)%h%C(reset) - %C(cyan)%an%C(reset) %C(dim)%ar%C(reset)%C(auto)%d%C(reset) %s" | \
-fzf --ansi \
-    --preview="$CONFIG_BASE/git_commit_preview.sh {}" \
-    --preview-window=down:50%:wrap \
-    --bind="enter:execute($CONFIG_BASE/git_file_breakdown.sh {})" \
-    --bind="double-click:ignore"
-EOF
-
-# Create lazygit config to disable 'q' quit
-cat > "$CONFIG_BASE/lazygit/config.yml" <<'EOF'
-keybinding:
-  universal:
-    quit: '<disabled>'
-    quit-alt1: '<esc>'
-EOF
+# Copy lazygit config
+mkdir -p "$CONFIG_BASE/lazygit"
+cp "$CONFIG_SOURCE/lazygit.yml" "$CONFIG_BASE/lazygit/config.yml"
 
 # Ranger config - use envsubst to substitute variables
 cat > "$RANGER_TEMP/rc.conf" <<EOF
@@ -107,6 +173,9 @@ cat > "$RANGER_TEMP/rc.conf" <<EOF
 set preview_files false
 set preview_directories false
 set show_hidden false
+
+# Default colorscheme (will be overridden by saved settings)
+set colorscheme default
 
 # Use 3 columns with files taking most space
 set column_ratios 1,1,2
@@ -116,29 +185,100 @@ set dirname_in_tabs true
 set unicode_ellipsis true
 set show_selection_in_titlebar false
 
-# Open files with Enter key - create nvim pane if needed, or open in existing buffer, then focus nvim
-map <Enter> shell if tmux list-panes | grep -q "1:"; then tmux send-keys -t 1 Escape ":e \$(readlink -f %p)" Enter; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -h -p 60 "cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi
+# Open files with Enter key - create nvim pane if needed, or open in existing buffer
+# Auto-switch behavior will be set based on JMUX_AUTO_SWITCH setting below
+ENTER_MAPPING_PLACEHOLDER
 unmap l
-unmap q
+# Let q work normally (quit ranger), wrapper will handle cleanup
 # Disable right arrow from opening files - only allow directory navigation
 map <right> eval fm.cd(fm.thisfile.path) if fm.thisfile.is_directory else None
 
-# Switch between panes with Tab and resize for focused app
+# Switch between panes with Tab (toggle between ranger and nvim)
 map <TAB> shell tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%
-map <S-TAB> shell tmux select-pane -t 0; tmux resize-pane -t 0 -x ${RANGER_FOCUSED_RATIO}%%
 
-# Open lazygit in popup with ;g - run in background to avoid terminal interference
-map ;g shell tmux display-popup -w 90%% -h 90%% -E 'XDG_CONFIG_HOME="$CONFIG_BASE" lazygit' &
+# Alternative pane switching keys (F1/F2) for backup
+map <F1> shell tmux select-pane -t 0; tmux resize-pane -t 0 -x ${RANGER_FOCUSED_RATIO}%%
+map <F2> shell tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%
+
+# Open lazygit in popup with :g - run in background to avoid terminal interference
+alias g shell tmux display-popup -w 90%% -h 90%% -E 'XDG_CONFIG_HOME="$CONFIG_BASE" lazygit' &
 
 # Open interactive git log with branch graph in popup with :gl
 alias gl shell tmux display-popup -w 90%% -h 90%% -E '$CONFIG_BASE/git_log_viewer.sh' &
 
-# Fuzzy file finder with Ctrl+p (VSCode style) - use shared script
+# Fuzzy file finder with Ctrl+p (VSCode style) - use cached file list
 map <C-p> shell tmux display-popup -w 80%% -h 60%% -E '$CONFIG_BASE/fuzzy_finder.sh "%d"' &
+
+# Settings menu with :s  
+alias s shell tmux display-popup -w 60%% -h 70%% -E "$CONFIG_BASE/settings_menu.sh" &
+
+# Tabbed terminal with :t
+alias t shell tmux display-popup -w 90%% -h 80%% -E "$CONFIG_BASE/tabbed_terminal.sh '%d'"
+
+# Reload config with Ctrl+R (for settings changes)
+map <C-r> eval fm.source(fm.confpath('rc.conf'))
+
+# :quit will work normally, wrapper handles cleanup
 EOF
+
+# Apply saved settings to ranger config
+SETTINGS_FILE="$CONFIG_BASE/settings"
+if [ -f "$SETTINGS_FILE" ]; then
+    # Load settings
+    . "$SETTINGS_FILE"
+    
+    # Apply ranger theme if set
+    if [ -n "$JMUX_RANGER_THEME" ]; then
+        sed -i "s/set colorscheme .*/set colorscheme $JMUX_RANGER_THEME/" "$RANGER_TEMP/rc.conf"
+    fi
+    
+    # Apply hidden files setting if set
+    if [ -n "$JMUX_SHOW_HIDDEN" ]; then
+        sed -i "s/set show_hidden .*/set show_hidden $JMUX_SHOW_HIDDEN/" "$RANGER_TEMP/rc.conf"
+    fi
+    
+    # Apply preview setting if set
+    if [ -n "$JMUX_SHOW_PREVIEW" ]; then
+        sed -i "s/set preview_files .*/set preview_files $JMUX_SHOW_PREVIEW/" "$RANGER_TEMP/rc.conf"
+        sed -i "s/set preview_directories .*/set preview_directories $JMUX_SHOW_PREVIEW/" "$RANGER_TEMP/rc.conf"
+    fi
+fi
+
+# Apply auto-switch to nvim setting (default: true)
+AUTO_SWITCH_SETTING="${JMUX_AUTO_SWITCH:-true}"
+
+# Create the appropriate Enter command and append it to ranger config
+if [ "$AUTO_SWITCH_SETTING" = "true" ]; then
+    # Auto-switch to nvim after opening file
+    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; tmux select-window -t ide:dev; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi" >> "$RANGER_TEMP/rc.conf"
+else
+    # Stay in ranger after opening file
+    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 0; fi" >> "$RANGER_TEMP/rc.conf"
+fi
+
+# Remove the placeholder line
+sed -i '/ENTER_MAPPING_PLACEHOLDER/d' "$RANGER_TEMP/rc.conf"
 
 # Nvim config
 cat > "$NVIM_TEMP/init.lua" <<'EOF'
+-- Load modular buffer management
+dofile(vim.fn.expand('$HOME/.config/jmux/buffer_manager.lua'))
+
+-- Load saved theme from settings
+local settings_file = vim.fn.expand('$HOME/.config/jmux/settings')
+if vim.fn.filereadable(settings_file) == 1 then
+    local settings = {}
+    for line in io.lines(settings_file) do
+        local key, value = line:match('(%w+)="([^"]*)"')
+        if key and value then
+            settings[key] = value
+        end
+    end
+    if settings.JMUX_THEME then
+        vim.cmd('colorscheme ' .. settings.JMUX_THEME)
+    end
+end
+
 -- Check nvim version once at the start
 local modern_nvim = vim.fn.has('nvim-0.7') == 1
 
@@ -152,173 +292,6 @@ vim.opt.mousefocus = true
 
 -- Disable tab displays - we'll use buffers instead
 vim.opt.showtabline = 0
-
--- Buffer management setup
-vim.g.buffer_history = {}
-
--- Helper function to check if buffer is valid (not buffer list)
-function is_valid_buffer(buf)
-  if not vim.api.nvim_buf_is_loaded(buf) or not vim.api.nvim_buf_get_option(buf, 'buflisted') then
-    return false
-  end
-  local name = vim.api.nvim_buf_get_name(buf)
-  return name ~= '' and not name:match('BufferList$')
-end
-
--- Helper function to get all valid buffers
-function get_valid_buffers()
-  local valid_buffers = {}
-  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if is_valid_buffer(buf) then
-      table.insert(valid_buffers, buf)
-    end
-  end
-  return valid_buffers
-end
-
--- Helper function to find buffer list window
-function find_buffer_list_window()
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local buf = vim.api.nvim_win_get_buf(win)
-    if vim.api.nvim_buf_get_name(buf):match('BufferList$') then
-      return win
-    end
-  end
-  return nil
-end
-
--- Function to update buffer history
-function update_buffer_history()
-  local current_buf = vim.fn.bufnr('%')
-  local history = vim.g.buffer_history or {}
-  
-  -- Remove current buffer from history if it exists
-  for i, buf in ipairs(history) do
-    if buf == current_buf then
-      table.remove(history, i)
-      break
-    end
-  end
-  
-  -- Add current buffer to beginning of history
-  table.insert(history, 1, current_buf)
-  
-  -- Keep only last 10 buffers
-  if #history > 10 then
-    table.remove(history, #history)
-  end
-  
-  vim.g.buffer_history = history
-end
-
--- Show buffer list in vertical split
-function show_buffer_list()
-  -- Check if buffer list window already exists
-  if find_buffer_list_window() then
-    return -- Already exists
-  end
-  
-  -- Create vertical split for buffer list
-  vim.cmd('vertical 20new BufferList')
-  local buf = vim.api.nvim_get_current_buf()
-  
-  -- Configure buffer list window
-  vim.api.nvim_buf_set_option(buf, 'buftype', 'nofile')
-  vim.api.nvim_buf_set_option(buf, 'swapfile', false)
-  vim.api.nvim_buf_set_option(buf, 'modifiable', true)
-  vim.api.nvim_win_set_option(0, 'number', false)
-  vim.api.nvim_win_set_option(0, 'relativenumber', false)
-  vim.api.nvim_win_set_option(0, 'wrap', false)
-  vim.api.nvim_win_set_option(0, 'cursorline', true)
-  
-  update_buffer_list()
-  
-  -- Set up keybindings in buffer list
-  vim.api.nvim_buf_set_keymap(buf, 'n', '<CR>', '<cmd>lua goto_selected_buffer()<CR>', {silent = true})
-  vim.api.nvim_buf_set_keymap(buf, 'n', '<2-LeftMouse>', '<cmd>lua goto_selected_buffer()<CR>', {silent = true})
-  vim.api.nvim_buf_set_keymap(buf, 'n', '<LeftMouse>', '<LeftMouse><cmd>lua goto_selected_buffer()<CR>', {silent = true})
-  vim.api.nvim_buf_set_keymap(buf, 'n', 'q', '<cmd>close<CR>', {silent = true})
-  
-  -- Make buffer list focusable but don't auto-focus
-  vim.api.nvim_win_set_option(0, 'winfixwidth', true)
-  
-  -- Go back to main window
-  vim.cmd('wincmd p')
-end
-
--- Update buffer list display
-function update_buffer_list()
-  local buflist_win = find_buffer_list_window()
-  if not buflist_win then return end
-  
-  local buflist_buf = vim.api.nvim_win_get_buf(buflist_win)
-  local lines = {'RECENT FILES:', ''}
-  local current_buf = vim.fn.bufnr('%')
-  
-  -- Get list of buffers ordered by history (most recent first)
-  local history = vim.g.buffer_history or {}
-  local buffers = {}
-  
-  -- Add buffers in history order
-  for _, buf in ipairs(history) do
-    if is_valid_buffer(buf) then
-      table.insert(buffers, {buf = buf, name = vim.api.nvim_buf_get_name(buf)})
-    end
-  end
-  
-  -- Add any buffers not in history (fallback)
-  for _, buf in ipairs(get_valid_buffers()) do
-    -- Check if already in buffers list
-    local already_added = false
-    for _, existing in ipairs(buffers) do
-      if existing.buf == buf then
-        already_added = true
-        break
-      end
-    end
-    if not already_added then
-      table.insert(buffers, {buf = buf, name = vim.api.nvim_buf_get_name(buf)})
-    end
-  end
-  
-  -- Display buffers
-  for i, buffer in ipairs(buffers) do
-    local filename = vim.fn.fnamemodify(buffer.name, ':t')
-    local prefix = (buffer.buf == current_buf) and '▶ ' or '  '
-    local is_modified = vim.api.nvim_buf_get_option(buffer.buf, 'modified')
-    local modified = is_modified and ' ●' or ''
-    table.insert(lines, prefix .. i .. ': ' .. filename .. modified)
-  end
-  
-  if #buffers == 0 then
-    table.insert(lines, '  No buffers')
-  end
-  
-  vim.api.nvim_buf_set_option(buflist_buf, 'modifiable', true)
-  vim.api.nvim_buf_set_lines(buflist_buf, 0, -1, false, lines)
-  vim.api.nvim_buf_set_option(buflist_buf, 'modifiable', false)
-  
-  -- Force redraw of the buffer list window (similar to quit file logic)
-  if vim.api.nvim_win_is_valid(buflist_win) then
-    vim.api.nvim_win_call(buflist_win, function()
-      vim.cmd('redraw')
-    end)
-  end
-end
-
--- Go to selected buffer
-function goto_selected_buffer()
-  local line = vim.fn.line('.')
-  if line <= 2 then return end -- Skip header lines
-  
-  local buffers = get_valid_buffers()
-  
-  local selected_index = line - 2 -- Account for header
-  if selected_index <= #buffers then
-    vim.cmd('wincmd p') -- Go to main window
-    vim.cmd('buffer ' .. buffers[selected_index])
-  end
-end
 
 -- Override :q to switch to previous buffer instead of closing
 vim.cmd([[
@@ -373,118 +346,18 @@ vim.cmd([[
   endfunction
 ]])
 
--- Auto-create buffer list and set up autocmds  
-if modern_nvim then
-  vim.api.nvim_create_augroup('BufferManagement', { clear = true })
-  
-  -- Create buffer list when nvim starts
-  vim.api.nvim_create_autocmd('VimEnter', {
-    group = 'BufferManagement',
-    callback = function()
-      show_buffer_list()
-      update_buffer_list()
-    end
-  })
-  
-  -- Only update buffer list on buffer enter (don't create)
-  vim.api.nvim_create_autocmd('BufEnter', {
-    group = 'BufferManagement',
-    callback = function()
-      -- Skip if we're in the buffer list itself
-      local current_buf_name = vim.api.nvim_buf_get_name(0)
-      if current_buf_name:match('BufferList$') then
-        return
-      end
-      
-      -- Only update if buffer list exists
-      update_buffer_list()
-    end
-  })
-  
-  -- Shared callback for text changes
-  local function on_text_changed()
-    update_buffer_history()
-    update_buffer_list()
-  end
-  
-  -- Move buffer to top of history when modified
-  vim.api.nvim_create_autocmd({'TextChanged', 'TextChangedI'}, {
-    group = 'BufferManagement',
-    callback = on_text_changed
-  })
-  
-  -- Update buffer list when file is saved (remove modified indicator)
-  vim.api.nvim_create_autocmd({'BufWritePost', 'BufWrite'}, {
-    group = 'BufferManagement',
-    callback = function()
-      -- Use vim.schedule to ensure the modified flag is updated
-      vim.schedule(function()
-        update_buffer_list()
-      end)
-    end
-  })
-else
-  -- Legacy autocmds for nvim 0.6.1
-  vim.cmd([[
-    augroup BufferManagement
-      autocmd!
-      autocmd VimEnter * lua show_buffer_list(); update_buffer_list()
-      autocmd BufEnter * lua if not vim.api.nvim_buf_get_name(0):match('BufferList$') then update_buffer_list() end
-      autocmd TextChanged,TextChangedI * lua update_buffer_history(); update_buffer_list()
-      autocmd BufWritePost,BufWrite * lua update_buffer_list()
-    augroup END
-  ]])
-end
-
-
--- Function to cycle through valid buffers only (skip buffer list)
-function cycle_buffers(direction)
-  local valid_buffers = get_valid_buffers()
-  
-  if #valid_buffers <= 1 then
-    return -- Nothing to cycle through
-  end
-  
-  -- Find current buffer index
-  local current_buf = vim.fn.bufnr('%')
-  local current_index = nil
-  for i, buf in ipairs(valid_buffers) do
-    if buf == current_buf then
-      current_index = i
-      break
-    end
-  end
-  
-  if not current_index then
-    -- Current buffer not in list, go to first valid buffer
-    vim.cmd('buffer ' .. valid_buffers[1])
-    return
-  end
-  
-  -- Calculate next buffer index
-  local next_index = current_index + direction
-  if next_index > #valid_buffers then
-    next_index = 1
-  elseif next_index < 1 then
-    next_index = #valid_buffers
-  end
-  
-  -- Switch to next buffer
-  vim.cmd('buffer ' .. valid_buffers[next_index])
-end
-
--- Add command to manually show buffer list
-if modern_nvim then
-  vim.api.nvim_create_user_command('Buffers', show_buffer_list, {})
-else
-  vim.cmd('command! Buffers lua show_buffer_list()')
-end
+-- Setup buffer management system
+setup_buffer_management()
 
 -- Buffer navigation keybinds
-
 if modern_nvim then
   -- Modern nvim (0.7+) with vim.keymap.set
   vim.keymap.set('n', '<Tab>', function()
+    vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")
+  end, { noremap = true, silent = true })
+  
+  -- Alternative F1 key for terminals that don't support Ctrl+Tab
+  vim.keymap.set('n', '<F1>', function()
     vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")
   end, { noremap = true, silent = true })
   
@@ -492,7 +365,7 @@ if modern_nvim then
   vim.keymap.set('n', '<C-n>', function() cycle_buffers(1) end, { noremap = true, silent = true })
   vim.keymap.set('n', '<C-m>', function() cycle_buffers(-1) end, { noremap = true, silent = true })
   
-  -- Fuzzy file finder with Ctrl+p (VSCode style) - use shared script
+  -- Fuzzy file finder with Ctrl+p (VSCode style) - use cached file list
   vim.keymap.set('n', '<C-p>', function()
     local config_base = vim.fn.expand("$HOME/.config/jmux")
     vim.fn.system("tmux display-popup -w 80% -h 60% -E '" .. config_base .. "/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"' &")
@@ -510,6 +383,7 @@ if modern_nvim then
 else
   -- Older nvim versions  
   vim.cmd('nnoremap <silent> <Tab> :lua vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")<CR>')
+  vim.cmd('nnoremap <silent> <F1> :lua vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")<CR>')
   vim.cmd('nnoremap <silent> <C-n> :lua cycle_buffers(1)<CR>')
   vim.cmd('nnoremap <silent> <C-m> :lua cycle_buffers(-1)<CR>')
   vim.cmd([[nnoremap <silent> <C-p> :lua local config_base = vim.fn.expand("$HOME/.config/jmux"); vim.fn.system("tmux display-popup -w 80% -h 60% -E '" .. config_base .. "/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"'")<CR>]])
@@ -517,22 +391,89 @@ else
 end
 EOF
 
-# Make all generated scripts executable
-chmod +x "$CONFIG_BASE/fuzzy_finder.sh" \
-          "$CONFIG_BASE/git_commit_preview.sh" \
-          "$CONFIG_BASE/git_file_breakdown.sh" \
-          "$CONFIG_BASE/git_log_viewer.sh"
+# Make all copied scripts executable
+chmod +x "$CONFIG_BASE"/*.sh
 
-# Start tmux session with ranger in the first pane
-tmux new-session -d -s ide "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'; tmux kill-session -t ide"
+# Clean up any existing sessions before starting
+cleanup_existing_sessions() {
+    # Kill any existing IDE sessions
+    tmux kill-session -t ide 2>/dev/null || true
+    tmux kill-session -t "$JMUX_SESSION_ID" 2>/dev/null || true
+    
+    # Clean up any orphaned jmux processes
+    pkill -f "jmux_files_cache" 2>/dev/null || true
+    
+    # Clean up old PID files (older than 1 hour)
+    find /tmp -name "jmux_session_*.pid" -mmin +60 -delete 2>/dev/null || true
+}
+
+cleanup_existing_sessions
+
+# Create a wrapper script that ensures cleanup on ranger exit
+cat > "/tmp/jmux_wrapper_$$.sh" << 'WRAPPER_EOF'
+#!/bin/bash
+cleanup_on_exit() {
+    echo "Ranger exited, cleaning up..."
+    tmux kill-session -t ide 2>/dev/null || true
+    pkill -f "jmux_files_cache" 2>/dev/null || true
+    rm -f /tmp/jmux_* 2>/dev/null || true
+    exit 0
+}
+trap cleanup_on_exit EXIT INT TERM
+WRAPPER_EOF
+
+echo "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'" >> "/tmp/jmux_wrapper_$$.sh"
+chmod +x "/tmp/jmux_wrapper_$$.sh"
+
+# Start tmux session with the wrapper
+tmux new-session -d -s ide "bash /tmp/jmux_wrapper_$$.sh"
 tmux rename-window 'dev'
+
+# Pre-cache file list for faster fzf startup with parent process monitoring
+if ! tmux list-windows -t ide | grep -q 'fzf-cache'; then
+    tmux new-window -t ide -n 'fzf-cache' -d
+    tmux send-keys -t ide:fzf-cache "cd '$WORK_DIR'" Enter
+    # Create cache script with proper PID tracking
+    cat > "/tmp/jmux_cache_script_$$.sh" << EOF
+#!/bin/bash
+PARENT_PID=$$
+echo \$\$ > /tmp/jmux_cache_pid
+while kill -0 \$PARENT_PID 2>/dev/null; do 
+    find . -type f -not -path '*/.*' | sed 's|^\./||' > /tmp/jmux_files_cache 2>/dev/null
+    sleep 10
+done
+# Parent died, clean up and exit
+rm -f /tmp/jmux_cache_pid /tmp/jmux_files_cache /tmp/jmux_cache_script_$$.sh
+tmux kill-session -t ide 2>/dev/null || true
+EOF
+    chmod +x "/tmp/jmux_cache_script_$$.sh"
+    tmux send-keys -t ide:fzf-cache "bash /tmp/jmux_cache_script_$$.sh" Enter
+fi
 
 # Enable mouse mode for better pane interaction
 tmux set-option -g mouse on
 tmux set-option -g focus-events on
 
-# Focus on ranger pane initially
+# Set up session hooks for proper cleanup
+tmux set-hook -t ide session-closed 'run-shell "pkill -f \"find.*jmux_files_cache\""'
+
+# Focus on ranger window initially  
+tmux select-window -t ide:dev
 tmux select-pane -t 0
 
-# Attach
-tmux attach-session -t ide
+# Attach to the session and handle cleanup when it ends
+if tmux has-session -t ide 2>/dev/null; then
+    # Disable the EXIT trap temporarily to avoid double cleanup
+    trap - EXIT
+    
+    # Attach to session - this will block until session ends
+    tmux attach-session -t ide
+    
+    # When we get here, the session has ended naturally
+    # Re-enable cleanup for any remaining processes
+    trap cleanup INT TERM
+    cleanup
+else
+    echo "Error: Failed to create tmux session"
+    exit 1
+fi
