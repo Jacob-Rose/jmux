@@ -3,6 +3,13 @@
 # jmux: A tmux-based IDE with ranger and nvim
 # Usage: jmux [directory]
 #
+# Features:
+#   - File manager (ranger) with nvim integration
+#   - Git integration (:g for lazygit, :gl for git log)
+#   - Fuzzy file finder (Ctrl+P)
+#   - Settings menu (:s)  
+#   - Tabbed terminal (:t)
+#
 # Cleanup: If sessions become orphaned, run:
 #   ./cleanup_jmux_sessions.sh
 #
@@ -154,6 +161,7 @@ cp "$SCRIPTS_SOURCE/git_commit_preview.sh" "$CONFIG_BASE/"
 cp "$SCRIPTS_SOURCE/git_file_breakdown.sh" "$CONFIG_BASE/"
 cp "$SCRIPTS_SOURCE/git_log_viewer.sh" "$CONFIG_BASE/"
 cp "$SCRIPTS_SOURCE/settings_menu.sh" "$CONFIG_BASE/"
+cp "$SCRIPTS_SOURCE/tabbed_terminal.sh" "$CONFIG_BASE/"
 
 # Copy lazygit config
 mkdir -p "$CONFIG_BASE/lazygit"
@@ -177,16 +185,21 @@ set dirname_in_tabs true
 set unicode_ellipsis true
 set show_selection_in_titlebar false
 
-# Open files with Enter key - create nvim pane if needed, or open in existing buffer, then focus nvim
-map <Enter> shell if tmux list-panes -t ide:dev | grep -q "1:"; then tmux send-keys -t ide:dev.1 Escape ":lua open_file_in_main_editor('\$(readlink -f %p)')" Enter; tmux select-window -t ide:dev; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -t ide:dev -h -p 60 "cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi
+# Open files with Enter key - create nvim pane if needed, or open in existing buffer
+# Auto-switch behavior will be set based on JMUX_AUTO_SWITCH setting below
+ENTER_MAPPING_PLACEHOLDER
 unmap l
 # Let q work normally (quit ranger), wrapper will handle cleanup
 # Disable right arrow from opening files - only allow directory navigation
 map <right> eval fm.cd(fm.thisfile.path) if fm.thisfile.is_directory else None
 
-# Switch between panes with Tab and resize for focused app
-map <TAB> shell tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%
-map <S-TAB> shell tmux select-pane -t 0; tmux resize-pane -t 0 -x ${RANGER_FOCUSED_RATIO}%%
+# Switch between panes with Ctrl+Tab and resize for focused app
+map <C-TAB> shell tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%
+map <C-S-TAB> shell tmux select-pane -t 0; tmux resize-pane -t 0 -x ${RANGER_FOCUSED_RATIO}%%
+
+# Alternative pane switching keys (F1/F2) for terminals that don't support Ctrl+Tab
+map <F1> shell tmux select-pane -t 0; tmux resize-pane -t 0 -x ${RANGER_FOCUSED_RATIO}%%
+map <F2> shell tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%
 
 # Open lazygit in popup with :g - run in background to avoid terminal interference
 alias g shell tmux display-popup -w 90%% -h 90%% -E 'XDG_CONFIG_HOME="$CONFIG_BASE" lazygit' &
@@ -199,6 +212,9 @@ map <C-p> shell tmux display-popup -w 80%% -h 60%% -E '$CONFIG_BASE/fuzzy_finder
 
 # Settings menu with :s  
 alias s shell tmux display-popup -w 60%% -h 70%% -E "$CONFIG_BASE/settings_menu.sh" &
+
+# Tabbed terminal with :t
+alias t shell tmux display-popup -w 90%% -h 80%% -E "$CONFIG_BASE/tabbed_terminal.sh '%d'"
 
 # :quit will work normally, wrapper handles cleanup
 EOF
@@ -225,6 +241,21 @@ if [ -f "$SETTINGS_FILE" ]; then
         sed -i "s/set preview_directories .*/set preview_directories $JMUX_SHOW_PREVIEW/" "$RANGER_TEMP/rc.conf"
     fi
 fi
+
+# Apply auto-switch to nvim setting (default: true)
+AUTO_SWITCH_SETTING="${JMUX_AUTO_SWITCH:-true}"
+
+# Create the appropriate Enter command and append it to ranger config
+if [ "$AUTO_SWITCH_SETTING" = "true" ]; then
+    # Auto-switch to nvim after opening file
+    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; tmux select-window -t ide:dev; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi" >> "$RANGER_TEMP/rc.conf"
+else
+    # Stay in ranger after opening file
+    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; fi" >> "$RANGER_TEMP/rc.conf"
+fi
+
+# Remove the placeholder line
+sed -i '/ENTER_MAPPING_PLACEHOLDER/d' "$RANGER_TEMP/rc.conf"
 
 # Nvim config
 cat > "$NVIM_TEMP/init.lua" <<'EOF'
@@ -319,7 +350,12 @@ setup_buffer_management()
 -- Buffer navigation keybinds
 if modern_nvim then
   -- Modern nvim (0.7+) with vim.keymap.set
-  vim.keymap.set('n', '<Tab>', function()
+  vim.keymap.set('n', '<C-Tab>', function()
+    vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")
+  end, { noremap = true, silent = true })
+  
+  -- Alternative F1 key for terminals that don't support Ctrl+Tab
+  vim.keymap.set('n', '<F1>', function()
     vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")
   end, { noremap = true, silent = true })
   
@@ -344,7 +380,8 @@ if modern_nvim then
   end, { noremap = true, silent = true })
 else
   -- Older nvim versions  
-  vim.cmd('nnoremap <silent> <Tab> :lua vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")<CR>')
+  vim.cmd('nnoremap <silent> <C-Tab> :lua vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")<CR>')
+  vim.cmd('nnoremap <silent> <F1> :lua vim.fn.system("tmux select-pane -t 0 && tmux resize-pane -t 0 -x " .. os.getenv("RANGER_FOCUSED_RATIO") .. "%")<CR>')
   vim.cmd('nnoremap <silent> <C-n> :lua cycle_buffers(1)<CR>')
   vim.cmd('nnoremap <silent> <C-m> :lua cycle_buffers(-1)<CR>')
   vim.cmd([[nnoremap <silent> <C-p> :lua local config_base = vim.fn.expand("$HOME/.config/jmux"); vim.fn.system("tmux display-popup -w 80% -h 60% -E '" .. config_base .. "/fuzzy_finder.sh \"" .. vim.fn.getcwd() .. "\"'")<CR>]])

@@ -23,8 +23,8 @@ jmux /path/to/project   # Start IDE in specific directory
 - `Enter` - Open file in nvim with automatic pane resizing (20-80 split)
 - `Right Arrow` - Directory navigation only (file opening disabled)
 - `Ctrl+P` - Fuzzy file finder with preview popup
-- `Tab` - Switch to nvim pane (20-80 split) 
-- `Shift+Tab` - Switch to ranger pane (40-60 split)
+- `Ctrl+Tab` or `F2` - Switch to nvim pane (20-80 split) 
+- `Ctrl+Shift+Tab` or `F1` - Switch to ranger pane (40-60 split)
 
 **Buffer Management** (nvim)
 - `Ctrl+N/M` - Cycle through buffers (next/previous)
@@ -32,9 +32,11 @@ jmux /path/to/project   # Start IDE in specific directory
 - `Ctrl+B` - Toggle recent files panel
 - `:q` - Close buffer (or entire IDE if last buffer)
 
-**Git Integration**
+**Commands**
 - `:g` - Lazygit popup (90% overlay, Escape to quit)
 - `:gl` - Interactive git log with branch graph and commit previews
+- `:s` - Settings menu (themes, auto-switch, hidden files, preview)
+- `:t` - Tabbed terminal (3 persistent terminals)
 - `Enter` (in git log) - View detailed file breakdown for selected commit
 
 **Configuration**

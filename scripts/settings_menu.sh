@@ -130,13 +130,15 @@ show_ranger_menu() {
     echo "Current theme: ${JMUX_RANGER_THEME:-default}"
     echo "Current hidden files: ${JMUX_SHOW_HIDDEN:-false}"
     echo "Current preview: ${JMUX_SHOW_PREVIEW:-false}"
+    echo "Current auto-switch to nvim: ${JMUX_AUTO_SWITCH:-true}"
     echo ""
     echo "1) Change colorscheme"
     echo "2) Toggle hidden files visibility"
     echo "3) Toggle file preview"
-    echo "4) Back to main menu"
+    echo "4) Toggle auto-switch to nvim on file open"
+    echo "5) Back to main menu"
     echo ""
-    echo "Enter option number (1-4) or 'q' to quit:"
+    echo "Enter option number (1-5) or 'q' to quit:"
 }
 
 # Tmux settings submenu function
@@ -338,7 +340,7 @@ case $main_choice in
         ;;
     2)  # Ranger Settings
         show_ranger_menu
-        read_menu_input 4
+        read_menu_input 5
         ranger_choice=$?
         
         case $ranger_choice in
@@ -385,7 +387,37 @@ case $main_choice in
                 sleep 1
                 exec "$0"
                 ;;
-            4)  # Back to main menu
+            4)  # Toggle auto-switch to nvim
+                if [ "${JMUX_AUTO_SWITCH:-true}" = "true" ]; then
+                    JMUX_AUTO_SWITCH="false"
+                else
+                    JMUX_AUTO_SWITCH="true"
+                fi
+                # Save setting
+                save_setting "JMUX_AUTO_SWITCH" "$JMUX_AUTO_SWITCH"
+                
+                # Apply immediately to current session by updating ranger config
+                RANGER_CONFIG="$HOME/.config/jmux/ranger_config/rc.conf"
+                if [ "$JMUX_AUTO_SWITCH" = "true" ]; then
+                    # Remove existing Enter mapping and add auto-switch version
+                    grep -v "^map <Enter>" "$RANGER_CONFIG" > "${RANGER_CONFIG}.tmp"
+                    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; tmux select-window -t ide:dev; tmux select-pane -t 1; tmux resize-pane -t 0 -x 20%%; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '\$HOME/.config/jmux/nvim_config/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 1; tmux resize-pane -t 0 -x 20%%; fi" >> "${RANGER_CONFIG}.tmp"
+                else
+                    # Remove existing Enter mapping and add no-switch version
+                    grep -v "^map <Enter>" "$RANGER_CONFIG" > "${RANGER_CONFIG}.tmp"
+                    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '\$HOME/.config/jmux/nvim_config/init.lua' '\$(readlink -f %p)'\"; fi" >> "${RANGER_CONFIG}.tmp"
+                fi
+                mv "${RANGER_CONFIG}.tmp" "$RANGER_CONFIG"
+                
+                # Try to reload ranger config automatically
+                tmux send-keys -t ide:dev.0 C-r 2>/dev/null || true
+                
+                echo "Auto-switch to nvim changed to: $JMUX_AUTO_SWITCH"
+                echo "Ranger config reloaded - setting is now active!"
+                sleep 2
+                exec "$0"
+                ;;
+            5)  # Back to main menu
                 exec "$0"
                 ;;
             0)  # Invalid/cancelled

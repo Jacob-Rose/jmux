@@ -6,11 +6,12 @@
 echo "Cleaning up orphaned jmux sessions..."
 
 # Kill orphaned tmux sessions
-orphaned_sessions=$(tmux list-sessions 2>/dev/null | grep "^ide:" || true)
+orphaned_sessions=$(tmux list-sessions 2>/dev/null | grep -E "^(ide|jmux-persist-terminal):" || true)
 if [ -n "$orphaned_sessions" ]; then
-    echo "Found orphaned IDE sessions:"
+    echo "Found orphaned jmux sessions:"
     echo "$orphaned_sessions"
     tmux kill-session -t ide 2>/dev/null || true
+    tmux kill-session -t jmux-persist-terminal 2>/dev/null || true
 fi
 
 # Clean up orphaned processes
