@@ -17,6 +17,10 @@ SESSION_NAME="jmux-persist-terminal"
 # Function to cleanup only temp files (NOT the session)
 cleanup_temp_files() {
     rm -f "/tmp/jmux_init_$$.sh" 2>/dev/null || true
+    rm -f "/tmp/jmux_functions_$$.sh" 2>/dev/null || true
+    rm -f "/tmp/jmux_command_palette_$$.sh" 2>/dev/null || true
+    # Unbind the : key when this session ends
+    tmux unbind-key -T root : 2>/dev/null || true
 }
 
 # Only trap for temp file cleanup - do NOT kill the session
@@ -74,11 +78,78 @@ tmux set-option -t "$SESSION_NAME" mouse on
 # Restore simple tmux key bindings that work
 tmux set-option -t "$SESSION_NAME" prefix C-b
 
-# Simple key bindings for terminal switching  
-tmux bind-key -t "$SESSION_NAME" -T prefix 1 select-window -t "$SESSION_NAME:0"
-tmux bind-key -t "$SESSION_NAME" -T prefix 2 select-window -t "$SESSION_NAME:1" 
-tmux bind-key -t "$SESSION_NAME" -T prefix 3 select-window -t "$SESSION_NAME:2"
-tmux bind-key -t "$SESSION_NAME" -T prefix q detach-client
+# Create command palette popup script
+COMMAND_PALETTE="/tmp/jmux_command_palette_$$.sh"
+cat > "$COMMAND_PALETTE" << 'PALETTE_EOF'
+#!/bin/bash
+SESSION_NAME="__SESSION_NAME__"
+
+# Create the command palette interface
+echo "╔════════════════════════════════════════╗"
+echo "║            JMUX COMMAND PALETTE        ║"
+echo "╠════════════════════════════════════════╣"
+echo "║  q - Return to jmux                    ║"
+echo "║  1 - Switch to terminal 1              ║" 
+echo "║  2 - Switch to terminal 2              ║"
+echo "║  3 - Switch to terminal 3              ║"
+echo "║                                        ║"
+echo "║  Press any key to cancel               ║"
+echo "╚════════════════════════════════════════╝"
+echo
+
+# Read single character input
+read -n 1 -p "Command: " cmd
+echo
+
+case "$cmd" in
+    "q"|"Q")
+        echo "Returning to jmux..."
+        sleep 0.5
+        tmux detach-client
+        ;;
+    "1")
+        echo "Switching to terminal 1..."
+        sleep 0.3
+        tmux select-window -t "$SESSION_NAME:0"
+        ;;
+    "2")
+        echo "Switching to terminal 2..."
+        sleep 0.3
+        tmux select-window -t "$SESSION_NAME:1"
+        ;;
+    "3")
+        echo "Switching to terminal 3..."
+        sleep 0.3
+        tmux select-window -t "$SESSION_NAME:2"
+        ;;
+    *)
+        echo "Cancelled"
+        sleep 0.3
+        ;;
+esac
+PALETTE_EOF
+chmod +x "$COMMAND_PALETTE"
+
+# No functions to source - we'll use tmux key binding instead
+JMUX_FUNCTIONS="/tmp/jmux_functions_$$.sh"
+cat > "$JMUX_FUNCTIONS" << 'FUNC_EOF'
+# Command palette is handled by tmux key binding
+echo "Press : for command palette"
+FUNC_EOF
+
+# Replace session name placeholders
+sed -i "s/__SESSION_NAME__/$SESSION_NAME/g" "$JMUX_FUNCTIONS"
+sed -i "s/__SESSION_NAME__/$SESSION_NAME/g" "$COMMAND_PALETTE"
+
+# Simple key bindings for terminal switching (backup)
+# Set these bindings for the current session
+tmux bind-key -T prefix 1 "select-window -t $SESSION_NAME:0" 
+tmux bind-key -T prefix 2 "select-window -t $SESSION_NAME:1"
+tmux bind-key -T prefix 3 "select-window -t $SESSION_NAME:2"
+tmux bind-key -T prefix q detach-client
+
+# Go back to what worked - global : binding
+tmux bind-key -T root : "display-popup -w 50% -h 60% -E '$COMMAND_PALETTE'"
 
 # Create a hidden welcome script to avoid code spam
 WELCOME_SCRIPT="/tmp/jmux_init_$$.sh"
@@ -95,8 +166,8 @@ cat << 'WELCOME_EOF'
   This session persists when you exit - use :t in jmux to return anytime
 
   🔹 Navigation:
-     Ctrl+B then 1/2/3  - Switch terminals      Ctrl+B then q - Return to jmux
-     Ctrl+B then n/p    - Next/Previous         Mouse click - Click on tabs
+     : (colon)              - Command palette   Mouse click - Click on tabs
+     Ctrl+B then 1/2/3      - Switch terminals  Ctrl+B then q - Return to jmux
 ═══════════════════════════════════════════════════════════════════════════════
 WELCOME_EOF
 SCRIPT_EOF
@@ -105,12 +176,12 @@ SCRIPT_EOF
 sed -i "s|__WORK_DIR__|$WORK_DIR|g" "$WELCOME_SCRIPT"
 chmod +x "$WELCOME_SCRIPT"
 
-# Execute welcome script and start bash normally
-tmux send-keys -t "$SESSION_NAME:0" "bash $WELCOME_SCRIPT && bash" Enter
+# Execute welcome script, source functions, and start bash
+tmux send-keys -t "$SESSION_NAME:0" "bash $WELCOME_SCRIPT && source $JMUX_FUNCTIONS && bash" Enter
 
-# Simple setup for other terminals  
-tmux send-keys -t "$SESSION_NAME:1" "clear && echo '📟 Terminal Tab 2 - $WORK_DIR' && echo 'Navigation: Ctrl+B + 1/2/3/q'" Enter
-tmux send-keys -t "$SESSION_NAME:2" "clear && echo '📟 Terminal Tab 3 - $WORK_DIR' && echo 'Navigation: Ctrl+B + 1/2/3/q'" Enter
+# Simple setup for other terminals with functions loaded
+tmux send-keys -t "$SESSION_NAME:1" "source $JMUX_FUNCTIONS && clear && echo '📟 Terminal Tab 2 - $WORK_DIR' && echo 'Press : for command palette'" Enter
+tmux send-keys -t "$SESSION_NAME:2" "source $JMUX_FUNCTIONS && clear && echo '📟 Terminal Tab 3 - $WORK_DIR' && echo 'Press : for command palette'" Enter
 
 # Start on the first terminal (window 0)
 tmux select-window -t "$SESSION_NAME:0"
