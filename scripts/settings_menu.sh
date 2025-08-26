@@ -42,6 +42,11 @@ if [ -f "$SETTINGS_FILE" ]; then
     source "$SETTINGS_FILE"
 fi
 
+# Apply saved ranger theme to current config if it exists
+if [ -n "${JMUX_RANGER_THEME}" ]; then
+    apply_ranger_theme "${JMUX_RANGER_THEME}"
+fi
+
 # Default theme if not set
 CURRENT_THEME="${JMUX_THEME:-default}"
 
@@ -89,6 +94,78 @@ show_theme_menu() {
 
     echo ""
     echo "Enter theme number (1-${#themes[@]}) or 'q' to quit:"
+}
+
+# Ranger theme selection menu function
+show_ranger_theme_menu() {
+    clear
+    echo "=== Select Ranger Theme ==="
+    echo "Current theme: ${JMUX_RANGER_THEME:-default}"
+    echo ""
+    echo "Available themes:"
+    
+    local ranger_themes=("default" "jungle" "snow" "solarized")
+    
+    # Display themes with numbers
+    for i in "${!ranger_themes[@]}"; do
+        num=$((i+1))
+        if [ "${ranger_themes[$i]}" = "${JMUX_RANGER_THEME:-default}" ]; then
+            echo "● $num) ${ranger_themes[$i]} (current)"
+        else
+            echo "  $num) ${ranger_themes[$i]}"
+        fi
+    done
+    
+    echo ""
+    echo "Enter theme number (1-${#ranger_themes[@]}) or 'q' to quit:"
+    
+    # Store themes array for later use
+    RANGER_THEMES=("${ranger_themes[@]}")
+}
+
+# Ranger settings submenu function
+show_ranger_menu() {
+    clear
+    echo "=== Ranger Settings ==="
+    echo "Current theme: ${JMUX_RANGER_THEME:-default}"
+    echo "Current hidden files: ${JMUX_SHOW_HIDDEN:-false}"
+    echo "Current preview: ${JMUX_SHOW_PREVIEW:-false}"
+    echo ""
+    echo "1) Change colorscheme"
+    echo "2) Toggle hidden files visibility"
+    echo "3) Toggle file preview"
+    echo "4) Back to main menu"
+    echo ""
+    echo "Enter option number (1-4) or 'q' to quit:"
+}
+
+# Tmux settings submenu function
+show_tmux_menu() {
+    clear
+    echo "=== Tmux Settings ==="
+    echo "Current pane split: ${JMUX_PANE_SPLIT:-40:60}"
+    echo "Current status bar: ${JMUX_STATUS_BAR:-on}"
+    echo ""
+    echo "1) Change pane split ratio"
+    echo "2) Toggle status bar"
+    echo "3) Back to main menu"
+    echo ""
+    echo "Enter option number (1-3) or 'q' to quit:"
+}
+
+# Pane split selection menu
+show_split_menu() {
+    clear
+    echo "=== Select Pane Split Ratio ==="
+    echo "Current: ${JMUX_PANE_SPLIT:-40:60}"
+    echo ""
+    echo "1) 30:70 (narrow file manager)"
+    echo "2) 40:60 (balanced - default)"
+    echo "3) 50:50 (equal split)"
+    echo "4) 60:40 (wide file manager)"
+    echo "5) Back to tmux menu"
+    echo ""
+    echo "Enter option number (1-5) or 'q' to quit:"
 }
 
 # Menu navigation function
@@ -144,6 +221,79 @@ read_menu_input() {
     fi
 }
 
+# Helper function to save settings
+save_setting() {
+    local key="$1"
+    local value="$2"
+    local temp_file="${SETTINGS_FILE}.tmp"
+    
+    # Create settings directory if it doesn't exist
+    mkdir -p "$(dirname "$SETTINGS_FILE")"
+    
+    # Create new settings file without the old key
+    if [ -f "$SETTINGS_FILE" ]; then
+        grep -v "^$key=" "$SETTINGS_FILE" > "$temp_file" 2>/dev/null || true
+    else
+        touch "$temp_file"
+    fi
+    
+    # Add the new setting
+    echo "$key=\"$value\"" >> "$temp_file"
+    mv "$temp_file" "$SETTINGS_FILE"
+}
+
+# Apply ranger settings
+apply_ranger_settings() {
+    local config_file="$HOME/.config/jmux/ranger_config/rc.conf"
+    
+    if [ -f "$config_file" ]; then
+        # Update show_hidden setting
+        if [ "${JMUX_SHOW_HIDDEN:-false}" = "true" ]; then
+            sed -i 's/set show_hidden false/set show_hidden true/' "$config_file"
+        else
+            sed -i 's/set show_hidden true/set show_hidden false/' "$config_file"
+        fi
+        
+        # Update preview settings
+        if [ "${JMUX_SHOW_PREVIEW:-false}" = "true" ]; then
+            sed -i 's/set preview_files false/set preview_files true/' "$config_file"
+            sed -i 's/set preview_directories false/set preview_directories true/' "$config_file"
+        else
+            sed -i 's/set preview_files true/set preview_files false/' "$config_file"
+            sed -i 's/set preview_directories true/set preview_directories false/' "$config_file"
+        fi
+        
+        # Theme saved to config - restart jmux to apply changes
+    fi
+}
+
+# Apply ranger theme
+apply_ranger_theme() {
+    local theme="$1"
+    local config_file="$HOME/.config/jmux/ranger_config/rc.conf"
+    
+    if [ -f "$config_file" ]; then
+        # Remove existing colorscheme line and add new one
+        sed -i '/^set colorscheme /d' "$config_file"
+        echo "set colorscheme $theme" >> "$config_file"
+        
+        # Theme saved to config - restart jmux to apply changes
+    fi
+}
+
+# Apply tmux settings
+apply_tmux_settings() {
+    # Apply status bar setting
+    if [ "${JMUX_STATUS_BAR:-on}" = "on" ]; then
+        tmux set-option -t ide status on
+    else
+        tmux set-option -t ide status off
+    fi
+    
+    # Apply pane split (requires restart for full effect)
+    # Just show message for now - would need jmux restart for split change
+}
+
 
 # Start the main menu
 show_main_menu
@@ -187,14 +337,109 @@ case $main_choice in
         esac
         ;;
     2)  # Ranger Settings
-        echo "Ranger settings - Coming soon!"
-        sleep 1
-        exit 0
+        show_ranger_menu
+        read_menu_input 4
+        ranger_choice=$?
+        
+        case $ranger_choice in
+            1)  # Change colorscheme
+                show_ranger_theme_menu
+                read_menu_input ${#RANGER_THEMES[@]}
+                theme_choice=$?
+                
+                if [ $theme_choice -gt 0 ]; then
+                    SELECTED_RANGER_THEME="${RANGER_THEMES[$((theme_choice-1))]}"
+                    save_setting "JMUX_RANGER_THEME" "$SELECTED_RANGER_THEME"
+                    apply_ranger_theme "$SELECTED_RANGER_THEME"
+                    echo "Ranger theme saved: $SELECTED_RANGER_THEME"
+                    echo "Restart jmux to apply the new theme"
+                    sleep 2
+                    exec "$0"
+                else
+                    exit 0
+                fi
+                ;;
+            2)  # Toggle hidden files
+                if [ "${JMUX_SHOW_HIDDEN:-false}" = "true" ]; then
+                    JMUX_SHOW_HIDDEN="false"
+                else
+                    JMUX_SHOW_HIDDEN="true"
+                fi
+                # Save setting
+                save_setting "JMUX_SHOW_HIDDEN" "$JMUX_SHOW_HIDDEN"
+                apply_ranger_settings
+                echo "Hidden files visibility changed to: $JMUX_SHOW_HIDDEN"
+                sleep 1
+                exec "$0"
+                ;;
+            3)  # Toggle preview
+                if [ "${JMUX_SHOW_PREVIEW:-false}" = "true" ]; then
+                    JMUX_SHOW_PREVIEW="false"
+                else
+                    JMUX_SHOW_PREVIEW="true"
+                fi
+                # Save setting
+                save_setting "JMUX_SHOW_PREVIEW" "$JMUX_SHOW_PREVIEW"
+                apply_ranger_settings
+                echo "File preview changed to: $JMUX_SHOW_PREVIEW"
+                sleep 1
+                exec "$0"
+                ;;
+            4)  # Back to main menu
+                exec "$0"
+                ;;
+            0)  # Invalid/cancelled
+                exit 0
+                ;;
+        esac
         ;;
     3)  # Tmux Settings  
-        echo "Tmux settings - Coming soon!"
-        sleep 1
-        exit 0
+        show_tmux_menu
+        read_menu_input 3
+        tmux_choice=$?
+        
+        case $tmux_choice in
+            1)  # Change pane split
+                show_split_menu
+                read_menu_input 5
+                split_choice=$?
+                
+                case $split_choice in
+                    1) JMUX_PANE_SPLIT="30:70" ;;
+                    2) JMUX_PANE_SPLIT="40:60" ;;
+                    3) JMUX_PANE_SPLIT="50:50" ;;
+                    4) JMUX_PANE_SPLIT="60:40" ;;
+                    5) exec "$0" ;;  # Back to tmux menu
+                    0) exit 0 ;;     # Invalid/cancelled
+                esac
+                
+                if [ -n "$JMUX_PANE_SPLIT" ]; then
+                    save_setting "JMUX_PANE_SPLIT" "$JMUX_PANE_SPLIT"
+                    apply_tmux_settings
+                    echo "Pane split changed to: $JMUX_PANE_SPLIT"
+                    sleep 1
+                    exec "$0"
+                fi
+                ;;
+            2)  # Toggle status bar
+                if [ "${JMUX_STATUS_BAR:-on}" = "on" ]; then
+                    JMUX_STATUS_BAR="off"
+                else
+                    JMUX_STATUS_BAR="on"
+                fi
+                save_setting "JMUX_STATUS_BAR" "$JMUX_STATUS_BAR"
+                apply_tmux_settings
+                echo "Status bar changed to: $JMUX_STATUS_BAR"
+                sleep 1
+                exec "$0"
+                ;;
+            3)  # Back to main menu
+                exec "$0"
+                ;;
+            0)  # Invalid/cancelled
+                exit 0
+                ;;
+        esac
         ;;
     0)  # Invalid/cancelled
         exit 0

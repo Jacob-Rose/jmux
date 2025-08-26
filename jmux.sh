@@ -7,6 +7,38 @@
 WORK_DIR="${1:-$(pwd)}"
 WORK_DIR="$(cd "$WORK_DIR" && pwd)"  # Get absolute path
 
+# Cleanup function to kill tmux session and all children
+cleanup() {
+    echo ""
+    echo "Cleaning up jmux session..."
+    
+    # Kill any background cache process
+    if [ -f /tmp/jmux_cache_pid ]; then
+        local cache_pid="$(cat /tmp/jmux_cache_pid 2>/dev/null)"
+        if [ -n "$cache_pid" ]; then
+            kill "$cache_pid" 2>/dev/null || true
+        fi
+        rm -f /tmp/jmux_cache_pid
+    fi
+    
+    # Kill any remaining find processes for file caching
+    pkill -f "find.*jmux_files_cache" 2>/dev/null || true
+    
+    # Kill the IDE session and all its windows/panes
+    if tmux has-session -t ide 2>/dev/null; then
+        tmux kill-session -t ide
+    fi
+    
+    # Clean up cache files
+    rm -f /tmp/jmux_files_cache
+    
+    echo "jmux session closed."
+    exit 0
+}
+
+# Set up signal traps for proper cleanup
+trap cleanup INT TERM EXIT
+
 # Configuration paths
 CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}/jmux"
 RANGER_TEMP="$CONFIG_BASE/ranger_config"
@@ -64,6 +96,9 @@ set preview_files false
 set preview_directories false
 set show_hidden false
 
+# Default colorscheme (will be overridden by saved settings)
+set colorscheme default
+
 # Use 3 columns with files taking most space
 set column_ratios 1,1,2
 
@@ -75,7 +110,8 @@ set show_selection_in_titlebar false
 # Open files with Enter key - create nvim pane if needed, or open in existing buffer, then focus nvim
 map <Enter> shell if tmux list-panes -t ide:dev | grep -q "1:"; then tmux send-keys -t ide:dev.1 Escape ":lua open_file_in_main_editor('\$(readlink -f %p)')" Enter; tmux select-window -t ide:dev; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -t ide:dev -h -p 60 "cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi
 unmap l
-unmap q
+# Map q to quit ranger and kill the entire jmux session
+map q shell tmux kill-session -t ide
 # Disable right arrow from opening files - only allow directory navigation
 map <right> eval fm.cd(fm.thisfile.path) if fm.thisfile.is_directory else None
 
@@ -93,8 +129,34 @@ alias gl shell tmux display-popup -w 90%% -h 90%% -E '$CONFIG_BASE/git_log_viewe
 map <C-p> shell tmux display-popup -w 80%% -h 60%% -E '$CONFIG_BASE/fuzzy_finder.sh "%d"' &
 
 # Settings menu with :s  
-alias s shell tmux display-popup -w 60%% -h 70%% -E "$CONFIG_BASE/settings_menu.sh"
+alias s shell tmux display-popup -w 60%% -h 70%% -E "$CONFIG_BASE/settings_menu.sh" &
+
+# Quit jmux entirely with :q
+alias quit shell tmux kill-session -t ide
 EOF
+
+# Apply saved settings to ranger config
+SETTINGS_FILE="$CONFIG_BASE/settings"
+if [ -f "$SETTINGS_FILE" ]; then
+    # Load settings
+    . "$SETTINGS_FILE"
+    
+    # Apply ranger theme if set
+    if [ -n "$JMUX_RANGER_THEME" ]; then
+        sed -i "s/set colorscheme .*/set colorscheme $JMUX_RANGER_THEME/" "$RANGER_TEMP/rc.conf"
+    fi
+    
+    # Apply hidden files setting if set
+    if [ -n "$JMUX_SHOW_HIDDEN" ]; then
+        sed -i "s/set show_hidden .*/set show_hidden $JMUX_SHOW_HIDDEN/" "$RANGER_TEMP/rc.conf"
+    fi
+    
+    # Apply preview setting if set
+    if [ -n "$JMUX_SHOW_PREVIEW" ]; then
+        sed -i "s/set preview_files .*/set preview_files $JMUX_SHOW_PREVIEW/" "$RANGER_TEMP/rc.conf"
+        sed -i "s/set preview_directories .*/set preview_directories $JMUX_SHOW_PREVIEW/" "$RANGER_TEMP/rc.conf"
+    fi
+fi
 
 # Nvim config
 cat > "$NVIM_TEMP/init.lua" <<'EOF'
@@ -225,21 +287,46 @@ EOF
 # Make all copied scripts executable
 chmod +x "$CONFIG_BASE"/*.sh
 
-# Start tmux session with ranger in the first pane
+# Kill existing session if it exists
+if tmux has-session -t ide 2>/dev/null; then
+    tmux kill-session -t ide
+fi
+
+# Start tmux session with ranger in the first pane - exit when ranger exits
 tmux new-session -d -s ide "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'; tmux kill-session -t ide"
 tmux rename-window 'dev'
 
 # Pre-cache file list for faster fzf startup
-tmux new-window -t ide -n 'fzf-cache' -d
-tmux send-keys -t ide:fzf-cache "cd '$WORK_DIR'" Enter
-tmux send-keys -t ide:fzf-cache "while true; do find . -type f -not -path '*/.*' | sed 's|^\./||' > /tmp/jmux_files_cache 2>/dev/null; sleep 10; done" Enter
+if ! tmux list-windows -t ide | grep -q 'fzf-cache'; then
+    tmux new-window -t ide -n 'fzf-cache' -d
+    tmux send-keys -t ide:fzf-cache "cd '$WORK_DIR'" Enter
+    tmux send-keys -t ide:fzf-cache "echo \$\$ > /tmp/jmux_cache_pid; while true; do find . -type f -not -path '*/.*' | sed 's|^\./||' > /tmp/jmux_files_cache 2>/dev/null; sleep 10; done" Enter
+fi
 
 # Enable mouse mode for better pane interaction
 tmux set-option -g mouse on
 tmux set-option -g focus-events on
 
-# Focus on ranger pane initially  
+# Set up session hooks for proper cleanup
+tmux set-hook -t ide session-closed 'run-shell "pkill -f \"find.*jmux_files_cache\""'
+
+# Focus on ranger window initially  
+tmux select-window -t ide:dev
 tmux select-pane -t 0
 
-# Attach
-tmux attach-session -t ide
+# Attach to the session and handle cleanup when it ends
+if tmux has-session -t ide 2>/dev/null; then
+    # Disable the EXIT trap temporarily to avoid double cleanup
+    trap - EXIT
+    
+    # Attach to session - this will block until session ends
+    tmux attach-session -t ide
+    
+    # When we get here, the session has ended naturally
+    # Re-enable cleanup for any remaining processes
+    trap cleanup INT TERM
+    cleanup
+else
+    echo "Error: Failed to create tmux session"
+    exit 1
+fi
