@@ -5,8 +5,8 @@ Textual jmux - A modern TUI file manager with integrated file editing
 
 from pathlib import Path
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import DirectoryTree, Header, Footer, Static, Input, TextArea
+from textual.containers import Horizontal, Vertical, Container
+from textual.widgets import DirectoryTree, Header, Footer, Static, Input, TextArea, Button, ListView, ListItem, Label
 from textual.reactive import reactive
 from textual.message import Message
 from textual.screen import ModalScreen
@@ -230,6 +230,83 @@ class FileFinderProvider(Provider):
 
 
 
+class TabManager(ListView):
+    """Vertical tab manager widget using ListView."""
+    
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.tabs = []
+        self.active_tab = 0
+    
+    def add_tab(self, name: str, file_path: Path = None) -> int:
+        """Add a new tab and return its index."""
+        tab_index = len(self.tabs)
+        self.tabs.append({
+            'name': name,
+            'file_path': file_path,
+            'content': '',
+            'is_modified': False
+        })
+        self.update_display()
+        return tab_index
+    
+    def close_tab(self, tab_index: int) -> bool:
+        """Close a tab. Returns True if successful."""
+        if 0 <= tab_index < len(self.tabs) and len(self.tabs) > 1:
+            self.tabs.pop(tab_index)
+            # Adjust active tab if needed
+            if self.active_tab >= len(self.tabs):
+                self.active_tab = len(self.tabs) - 1
+            elif self.active_tab > tab_index:
+                self.active_tab -= 1
+            self.update_display()
+            return True
+        return False
+    
+    def set_active_tab(self, tab_index: int) -> bool:
+        """Set the active tab."""
+        if 0 <= tab_index < len(self.tabs):
+            self.active_tab = tab_index
+            self.update_display()
+            # Set the ListView index to match
+            if tab_index < len(self.children):
+                self.index = tab_index
+            return True
+        return False
+    
+    def update_display(self) -> None:
+        """Update the visual display of tabs."""
+        # Clear current items
+        self.clear()
+        
+        if not self.tabs:
+            return
+        
+        # Add each tab as a ListItem
+        for i, tab in enumerate(self.tabs):
+            prefix = "▶ " if i == self.active_tab else "  "
+            modified = " *" if tab.get('is_modified', False) else ""
+            name = tab['name'][:18] + ("..." if len(tab['name']) > 18 else "")
+            
+            label = Label(f"{prefix}{i+1}. {name}{modified}")
+            list_item = ListItem(label)
+            self.append(list_item)
+    
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Handle ListView selection."""
+        tab_index = event.index
+        if 0 <= tab_index < len(self.tabs):
+            self.active_tab = tab_index
+            self.update_display()
+            self.post_message(TabManager.TabSwitched(tab_index))
+    
+    class TabSwitched(Message):
+        """Message sent when tab is switched."""
+        def __init__(self, tab_index: int) -> None:
+            super().__init__()
+            self.tab_index = tab_index
+
+
 class TextualJmux(App):
     """Main Textual jmux application."""
     
@@ -248,7 +325,12 @@ class TextualJmux(App):
     }
     
     .left-panel {
-        width: 45%;
+        width: 25%;
+        background: $surface;
+    }
+    
+    .middle-panel {
+        width: 20%;
         background: $surface;
     }
     
@@ -261,6 +343,15 @@ class TextualJmux(App):
         padding: 1;
         background: $surface;
         color: $text;
+        border-title-align: center;
+    }
+    
+    TabManager {
+        width: 100%;
+        padding: 1;
+        background: $surface;
+        color: $text;
+        border: solid $accent;
         border-title-align: center;
     }
     
@@ -294,10 +385,13 @@ class TextualJmux(App):
     """
     
     BINDINGS = [
-        ("ctrl+p", "command_palette", "File finder"),
+        ("colon", "command_palette", "File finder"),
         ("ctrl+c", "quit", "Quit"),
         ("ctrl+o", "open_in_nvim", "Open in nvim"),
         ("ctrl+s", "save_file", "Save file"),
+        ("ctrl+w", "close_tab", "Close tab"),
+        ("ctrl+tab", "next_tab", "Next tab"),
+        ("ctrl+shift+tab", "prev_tab", "Previous tab"),
         ("f", "toggle_files", "Toggle files"),
         ("escape", "cancel", "Cancel"),
     ]
@@ -313,20 +407,24 @@ class TextualJmux(App):
             with Vertical(classes="left-panel panel"):
                 yield FileBrowser("./", id="file_browser")
                 yield Static(
-                    "📁 Use ↑↓ or click to navigate\n"
-                    "💾 Double-click to view files\n"
-                    "⚡ Press : for commands (:q to quit)", 
+                    "📁 Navigate files\n"
+                    "💾 Double-click to open\n"
+                    "🔍 : (colon) fuzzy search", 
                     classes="status",
                     id="browser_status"
                 )
+            
+            # Middle panel - Tab manager
+            with Vertical(classes="middle-panel panel"):
+                yield TabManager(id="tab_manager")
             
             # Right panel - File editor  
             with Vertical(classes="right-panel panel"):
                 yield FileEditor(id="file_editor")
                 yield Static(
                     "📝 File editor ready\n"
-                    "🔍 Ctrl+P: fuzzy search | Ctrl+S: save\n"
-                    "⌨️  Press : for vim commands", 
+                    "🔍 : (colon) search | Ctrl+S: save\n"
+                    "📑 Ctrl+Tab: switch | Ctrl+W: close", 
                     classes="status",
                     id="viewer_status"
                 )
@@ -338,9 +436,14 @@ class TextualJmux(App):
         # Set up titles
         file_browser = self.query_one("#file_browser", FileBrowser)
         file_editor = self.query_one("#file_editor", FileEditor)
+        tab_manager = self.query_one("#tab_manager", TabManager)
         
         file_browser.border_title = "📁 File Browser"
         file_editor.border_title = "📝 File Editor"
+        tab_manager.border_title = "📑 Open Tabs"
+        
+        # Initialize with a default tab
+        tab_manager.add_tab("Welcome", None)
         
         # Show initial welcome
         file_editor.text = (
@@ -349,32 +452,33 @@ class TextualJmux(App):
             "Welcome to the modern file editor!\n\n"
             "Features:\n"
             "• Full text editing with syntax highlighting\n"
-            "• Scroll support and cursor navigation\n"
-            "• Ctrl+S to save files\n"
-            "• Ctrl+P for fuzzy file search\n"
-            "• Press : for vim-style commands\n"
+            "• Vertical tab system for multiple files\n"
+            "• Ctrl+Tab: switch tabs | Ctrl+W: close tab\n"
+            "• Ctrl+S to save | : (colon) for fuzzy search\n"
             "• Ctrl+O to open in external nvim\n\n"
             "Select a file from the left panel to start editing."
         )
     
     def on_file_browser_file_double_clicked(self, event: FileBrowser.FileDoubleClicked) -> None:
-        """Handle file selection - load in editor."""
+        """Handle file selection - open in new tab or switch to existing tab."""
         file_path = event.path
-        self.current_file = str(file_path)
         
-        # Update the file editor
-        file_editor = self.query_one("#file_editor", FileEditor)
-        file_editor.load_file(file_path)
+        if not file_path.is_file():
+            return
         
-        # Update status
-        status = self.query_one("#viewer_status", Static)
-        file_editor = self.query_one("#file_editor", FileEditor)
-        modified_indicator = " *" if file_editor.is_modified else ""
-        status.update(
-            f"📝 Editing: {file_path.name}{modified_indicator}\n"
-            f"📂 Path: {file_path}\n"
-            f"⚡ Ctrl+S to save | :q to quit | Full editing enabled"
-        )
+        tab_manager = self.query_one("#tab_manager", TabManager)
+        
+        # Check if file is already open in a tab
+        for i, tab in enumerate(tab_manager.tabs):
+            if tab.get('file_path') == file_path:
+                tab_manager.set_active_tab(i)
+                self._switch_to_tab(i)
+                return
+        
+        # Open in new tab
+        tab_index = tab_manager.add_tab(file_path.name, file_path)
+        tab_manager.set_active_tab(tab_index)
+        self._switch_to_tab(tab_index)
     
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         """Handle single file selection - load in editor."""
@@ -416,12 +520,19 @@ class TextualJmux(App):
     def action_save_file(self) -> None:
         """Save the current file."""
         file_editor = self.query_one("#file_editor", FileEditor)
+        tab_manager = self.query_one("#tab_manager", TabManager)
+        
         if file_editor.current_file and file_editor.save_file():
+            # Update tab to show it's no longer modified
+            if tab_manager.active_tab < len(tab_manager.tabs):
+                tab_manager.tabs[tab_manager.active_tab]['is_modified'] = False
+                tab_manager.update_display()
+            
             status = self.query_one("#viewer_status", Static)
             status.update(
                 f"✓ Saved: {file_editor.current_file.name}\n"
                 f"📂 Path: {file_editor.current_file}\n"
-                f"⚡ File saved successfully | :q to quit"
+                f"⚡ File saved successfully"
             )
         else:
             status = self.query_one("#viewer_status", Static)
@@ -438,19 +549,94 @@ class TextualJmux(App):
     
     def _open_file_from_palette(self, file_path: Path) -> None:
         """Open a file selected from the command palette."""
-        self.current_file = str(file_path)
+        tab_manager = self.query_one("#tab_manager", TabManager)
         
-        # Update the file editor
-        file_editor = self.query_one("#file_editor", FileEditor)
-        file_editor.load_file(file_path)
+        # Check if file is already open in a tab
+        for i, tab in enumerate(tab_manager.tabs):
+            if tab.get('file_path') == file_path:
+                tab_manager.set_active_tab(i)
+                self._switch_to_tab(i)
+                return
         
-        # Update status
-        status = self.query_one("#viewer_status", Static)
-        status.update(
-            f"📝 Editing: {file_path.name}\n"
-            f"📂 Path: {file_path}\n"
-            f"⚡ Ctrl+S to save | Ctrl+P to find more | :q to quit"
-        )
+        # Open in new tab
+        tab_index = tab_manager.add_tab(file_path.name, file_path)
+        tab_manager.set_active_tab(tab_index)
+        self._switch_to_tab(tab_index)
+    
+    def _switch_to_tab(self, tab_index: int) -> None:
+        """Switch the editor to show the specified tab."""
+        tab_manager = self.query_one("#tab_manager", TabManager)
+        
+        if not (0 <= tab_index < len(tab_manager.tabs)):
+            return
+        
+        tab = tab_manager.tabs[tab_index]
+        file_path = tab.get('file_path')
+        
+        if file_path:
+            self.current_file = str(file_path)
+            
+            # Update the file editor
+            file_editor = self.query_one("#file_editor", FileEditor)
+            file_editor.load_file(file_path)
+            
+            # Update status
+            status = self.query_one("#viewer_status", Static)
+            modified_indicator = " *" if file_editor.is_modified else ""
+            status.update(
+                f"📝 Editing: {file_path.name}{modified_indicator}\n"
+                f"📂 Path: {file_path}\n"
+                f"⚡ Tab {tab_index + 1} of {len(tab_manager.tabs)}"
+            )
+        else:
+            # Welcome tab or empty tab
+            file_editor = self.query_one("#file_editor", FileEditor)
+            file_editor.text = (
+                "🚀 Textual jmux - Enhanced Editor\n"
+                "══════════════════════════════\n\n"
+                "Welcome to the modern file editor!\n\n"
+                "Features:\n"
+                "• Full text editing with syntax highlighting\n"
+                "• Vertical tab system for multiple files\n"
+                "• Ctrl+Tab: switch tabs | Ctrl+W: close tab\n"
+                "• Ctrl+S to save | : (colon) for fuzzy search\n"
+                "• Ctrl+O to open in external nvim\n\n"
+                "Select a file from the left panel to start editing."
+            )
+            file_editor.read_only = True
+            self.current_file = ""
+    
+    def on_tab_manager_tab_switched(self, event: TabManager.TabSwitched) -> None:
+        """Handle tab switch from the tab manager."""
+        self._switch_to_tab(event.tab_index)
+    
+    def action_next_tab(self) -> None:
+        """Switch to the next tab."""
+        tab_manager = self.query_one("#tab_manager", TabManager)
+        if len(tab_manager.tabs) > 1:
+            next_tab = (tab_manager.active_tab + 1) % len(tab_manager.tabs)
+            tab_manager.set_active_tab(next_tab)
+            self._switch_to_tab(next_tab)
+    
+    def action_prev_tab(self) -> None:
+        """Switch to the previous tab."""
+        tab_manager = self.query_one("#tab_manager", TabManager)
+        if len(tab_manager.tabs) > 1:
+            prev_tab = (tab_manager.active_tab - 1) % len(tab_manager.tabs)
+            tab_manager.set_active_tab(prev_tab)
+            self._switch_to_tab(prev_tab)
+    
+    def action_close_tab(self) -> None:
+        """Close the current tab."""
+        tab_manager = self.query_one("#tab_manager", TabManager)
+        
+        if len(tab_manager.tabs) <= 1:
+            return  # Don't close the last tab
+        
+        current_tab = tab_manager.active_tab
+        if tab_manager.close_tab(current_tab):
+            # Switch to the new active tab
+            self._switch_to_tab(tab_manager.active_tab)
     
     def action_cancel(self) -> None:
         """Cancel any active operation."""
