@@ -1,0 +1,3 @@
+This is a sample text file for testing the double-click functionality.
+
+You can double-click this file in the textual file browser to open it in nvim!

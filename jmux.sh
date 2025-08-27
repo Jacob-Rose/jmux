@@ -180,6 +180,9 @@ set colorscheme default
 # Use 3 columns with files taking most space
 set column_ratios 1,1,2
 
+# Enable mouse support
+set mouse_enabled true
+
 # Prioritize filename over extension when truncating
 set dirname_in_tabs true
 set unicode_ellipsis true
@@ -250,10 +253,12 @@ AUTO_SWITCH_SETTING="${JMUX_AUTO_SWITCH:-true}"
 # Create the appropriate Enter command and append it to ranger config
 if [ "$AUTO_SWITCH_SETTING" = "true" ]; then
     # Auto-switch to nvim after opening file
-    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; tmux select-window -t ide:dev; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi" >> "$RANGER_TEMP/rc.conf"
+    OPEN_FILE_COMMAND="shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; tmux select-window -t ide:dev; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi"
+    echo "map <Enter> $OPEN_FILE_COMMAND" >> "$RANGER_TEMP/rc.conf"
 else
     # Stay in ranger after opening file
-    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 0; fi" >> "$RANGER_TEMP/rc.conf"
+    OPEN_FILE_COMMAND="shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 0; fi"
+    echo "map <Enter> $OPEN_FILE_COMMAND" >> "$RANGER_TEMP/rc.conf"
 fi
 
 # Remove the placeholder line
