@@ -6,12 +6,15 @@ Textual jmux - A modern TUI file manager with integrated file editing
 from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DirectoryTree, Header, Footer, Static, Input
+from textual.widgets import DirectoryTree, Header, Footer, Static, Input, TextArea
 from textual.reactive import reactive
 from textual.message import Message
 from textual.screen import ModalScreen
+from textual.command import Provider, Hit, Hits
+from functools import partial
 import subprocess
 import os
+import fnmatch
 
 
 class FileBrowser(DirectoryTree):
@@ -39,99 +42,199 @@ class FileBrowser(DirectoryTree):
                     self.post_message(self.FileDoubleClicked(path))
 
 
-class FileViewer(Static):
-    """Widget to display file contents."""
+class FileEditor(TextArea):
+    """Enhanced text editor widget with file operations."""
     
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.current_file: Path | None = None
+        self.is_modified = False
+        self.original_content = ""
     
     def load_file(self, file_path: Path) -> None:
-        """Load and display a file's contents."""
+        """Load and display a file's contents for editing."""
         self.current_file = file_path
         try:
             if file_path.is_file():
                 # Read file contents
                 content = file_path.read_text(encoding='utf-8', errors='ignore')
-                # Limit content size for display
-                if len(content) > 10000:
-                    content = content[:10000] + "\n\n... (file truncated, too large to display)"
                 
                 # Strip ANSI escape sequences and other control characters
                 import re
-                # Remove ANSI escape sequences
                 ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
                 content = ansi_escape.sub('', content)
                 
-                # Create a nice header
-                header = f"📄 {file_path.name}\n{'─' * 50}\n"
-                # Use Rich Text object to prevent markup parsing
-                from rich.text import Text
-                display_text = Text(header + content, no_wrap=False)
-                self.update(display_text)
+                # Store original content for comparison
+                self.original_content = content
+                
+                # Load content into TextArea
+                self.text = content
+                
+                # Set syntax highlighting based on file extension
+                self._set_language_from_extension(file_path.suffix)
+                
+                # Enable editing
+                self.read_only = False
+                self.is_modified = False
             else:
-                self.update(f"📁 {file_path.name}\n{'─' * 50}\n\nDirectory selected. Navigate to view files.")
+                # Show directory info
+                dir_info = f"📁 Directory: {file_path.name}\n\nThis is a directory. Select a file to edit."
+                self.text = dir_info
+                self.read_only = True
+                self.current_file = None
         except Exception as e:
-            self.update(f"❌ Error loading file: {e}")
+            self.text = f"❌ Error loading file: {e}"
+            self.read_only = True
+            self.current_file = None
+    
+    def _set_language_from_extension(self, extension: str) -> None:
+        """Set syntax highlighting language based on file extension."""
+        language_map = {
+            '.py': 'python',
+            '.js': 'javascript', 
+            '.ts': 'typescript',
+            '.jsx': 'javascript',
+            '.tsx': 'typescript',
+            '.html': 'html',
+            '.css': 'css',
+            '.scss': 'scss',
+            '.json': 'json',
+            '.yaml': 'yaml',
+            '.yml': 'yaml',
+            '.toml': 'toml',
+            '.md': 'markdown',
+            '.sh': 'bash',
+            '.bash': 'bash',
+            '.zsh': 'bash',
+            '.rs': 'rust',
+            '.go': 'go',
+            '.java': 'java',
+            '.c': 'c',
+            '.cpp': 'cpp',
+            '.h': 'c',
+            '.hpp': 'cpp',
+        }
+        
+        try:
+            if extension.lower() in language_map:
+                self.language = language_map[extension.lower()]
+            else:
+                self.language = None  # Plain text
+        except Exception:
+            # If syntax highlighting fails, just use plain text
+            self.language = None
+    
+    def save_file(self) -> bool:
+        """Save the current content to file."""
+        if not self.current_file:
+            return False
+            
+        try:
+            self.current_file.write_text(self.text, encoding='utf-8')
+            self.original_content = self.text
+            self.is_modified = False
+            return True
+        except Exception:
+            return False
+    
+    def on_text_area_changed(self, event) -> None:
+        """Track modifications to the file."""
+        if self.current_file:
+            self.is_modified = self.text != self.original_content
 
 
-class CommandScreen(ModalScreen[str]):
-    """Vim-style command input screen."""
+
+
+
+class FileFinderProvider(Provider):
+    """A command provider for fuzzy file finding using Textual's built-in fuzzy search."""
     
-    CSS = """
-    CommandScreen {
-        align: center middle;
-    }
+    async def startup(self) -> None:
+        """Called when command palette opens - build file list."""
+        worker = self.app.run_worker(self._get_files, thread=True)
+        self.files = await worker.wait()
     
-    #command_dialog {
-        width: 60%;
-        height: auto;
-        background: $panel;
-        border: solid $primary;
-        padding: 1;
-    }
+    def _get_files(self) -> list[Path]:
+        """Get all files recursively in current directory."""
+        try:
+            all_files = []
+            root_path = Path.cwd()
+            
+            # Get all files recursively, including hidden ones
+            for pattern in ["**/*", "**/.*"]:
+                try:
+                    files = list(root_path.glob(pattern))
+                    for f in files:
+                        if f.is_file() and f not in all_files:
+                            all_files.append(f)
+                except Exception:
+                    continue
+            
+            # Sort by name for consistent ordering
+            all_files.sort(key=lambda x: str(x).lower())
+            return all_files[:500]  # Limit for performance
+            
+        except Exception:
+            return []
     
-    #command_input {
-        width: 100%;
-        margin-bottom: 1;
-    }
-    
-    #command_help {
-        color: $text-muted;
-        text-align: center;
-    }
-    """
-    
-    def compose(self) -> ComposeResult:
-        with Vertical(id="command_dialog"):
-            yield Static("Command Mode (vim-style)", id="command_title")
-            yield Input(placeholder="Enter command (e.g., :q, :quit, :o filename)", id="command_input")
-            yield Static(
-                "Available commands: :q :quit (exit) | :o <file> (open) | :e <file> (edit)",
-                id="command_help"
-            )
-    
-    def on_mount(self) -> None:
-        """Focus the input when screen opens."""
-        input_widget = self.query_one("#command_input", Input)
-        input_widget.focus()
-    
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle command submission."""
-        command = event.value.strip()
-        if command:
-            self.dismiss(command)
-        else:
-            self.dismiss("")
-    
-    def on_key(self, event) -> None:
-        """Handle escape to cancel."""
-        if event.key == "escape":
-            self.dismiss("")
+    async def search(self, query: str) -> Hits:
+        """Search for files using Textual's fuzzy matcher."""
+        if not hasattr(self, 'files'):
+            return
+            
+        matcher = self.matcher(query)
+        app = self.app
+        
+        if not isinstance(app, TextualJmux):
+            return
+        
+        for file_path in self.files:
+            try:
+                # Get display path (relative if possible)
+                try:
+                    display_path = file_path.relative_to(Path.cwd())
+                except ValueError:
+                    display_path = file_path
+                
+                # Create search text with file type info
+                file_name = display_path.name
+                search_text = f"{file_name} {str(display_path)}"
+                
+                score = matcher.match(search_text)
+                if score > 0:
+                    # Add file type emoji
+                    if file_path.suffix in ['.py', '.js', '.ts', '.jsx', '.tsx']:
+                        icon = "🐍" if file_path.suffix == '.py' else "📜"
+                    elif file_path.suffix in ['.md', '.txt', '.rst']:
+                        icon = "📄"
+                    elif file_path.suffix in ['.json', '.yaml', '.yml', '.toml']:
+                        icon = "⚙️"
+                    elif file_path.suffix in ['.sh', '.bash', '.zsh']:
+                        icon = "🔧"
+                    else:
+                        icon = "📄"
+                    
+                    # Create highlighted display text
+                    display_text = f"{icon} {display_path}"
+                    
+                    yield Hit(
+                        score,
+                        matcher.highlight(display_text),
+                        partial(app._open_file_from_palette, file_path),
+                        help=f"Open {file_path.name} in viewer"
+                    )
+                    
+            except Exception:
+                continue
+
+
 
 
 class TextualJmux(App):
     """Main Textual jmux application."""
+    
+    # Add our custom file finder to the command palette
+    COMMANDS = App.COMMANDS | {FileFinderProvider}
     
     CSS = """
     Screen {
@@ -161,7 +264,7 @@ class TextualJmux(App):
         border-title-align: center;
     }
     
-    FileViewer {
+    FileEditor {
         padding: 1;
         background: $panel;
         color: $text;
@@ -191,9 +294,10 @@ class TextualJmux(App):
     """
     
     BINDINGS = [
-        ("colon", "command_mode", "Command mode"),
+        ("ctrl+p", "command_palette", "File finder"),
         ("ctrl+c", "quit", "Quit"),
         ("ctrl+o", "open_in_nvim", "Open in nvim"),
+        ("ctrl+s", "save_file", "Save file"),
         ("f", "toggle_files", "Toggle files"),
         ("escape", "cancel", "Cancel"),
     ]
@@ -216,12 +320,12 @@ class TextualJmux(App):
                     id="browser_status"
                 )
             
-            # Right panel - File viewer  
+            # Right panel - File editor  
             with Vertical(classes="right-panel panel"):
-                yield FileViewer(id="file_viewer")
+                yield FileEditor(id="file_editor")
                 yield Static(
-                    "📄 File content appears here\n"
-                    "🔍 Select files to preview\n"
+                    "📝 File editor ready\n"
+                    "🔍 Ctrl+P: fuzzy search | Ctrl+S: save\n"
                     "⌨️  Press : for vim commands", 
                     classes="status",
                     id="viewer_status"
@@ -233,44 +337,47 @@ class TextualJmux(App):
         """Called when the app is ready."""
         # Set up titles
         file_browser = self.query_one("#file_browser", FileBrowser)
-        file_viewer = self.query_one("#file_viewer", FileViewer)
+        file_editor = self.query_one("#file_editor", FileEditor)
         
         file_browser.border_title = "📁 File Browser"
-        file_viewer.border_title = "📄 File Viewer"
+        file_editor.border_title = "📝 File Editor"
         
         # Show initial welcome
-        file_viewer.update(
-            "🚀 Textual jmux\n"
-            "═══════════════\n\n"
-            "Welcome to the modern file manager!\n\n"
+        file_editor.text = (
+            "🚀 Textual jmux - Enhanced Editor\n"
+            "══════════════════════════════\n\n"
+            "Welcome to the modern file editor!\n\n"
             "Features:\n"
-            "• Navigate with mouse or keyboard\n"
-            "• Double-click files to preview\n"
-            "• Press : for vim-style commands (:q to quit)\n"
-            "• Ctrl+O to open in external nvim\n"
-            "• Built with Python + Textual\n\n"
-            "Select a file from the left panel to get started."
+            "• Full text editing with syntax highlighting\n"
+            "• Scroll support and cursor navigation\n"
+            "• Ctrl+S to save files\n"
+            "• Ctrl+P for fuzzy file search\n"
+            "• Press : for vim-style commands\n"
+            "• Ctrl+O to open in external nvim\n\n"
+            "Select a file from the left panel to start editing."
         )
     
     def on_file_browser_file_double_clicked(self, event: FileBrowser.FileDoubleClicked) -> None:
-        """Handle file selection - show in right panel."""
+        """Handle file selection - load in editor."""
         file_path = event.path
         self.current_file = str(file_path)
         
-        # Update the file viewer
-        file_viewer = self.query_one("#file_viewer", FileViewer)
-        file_viewer.load_file(file_path)
+        # Update the file editor
+        file_editor = self.query_one("#file_editor", FileEditor)
+        file_editor.load_file(file_path)
         
         # Update status
         status = self.query_one("#viewer_status", Static)
+        file_editor = self.query_one("#file_editor", FileEditor)
+        modified_indicator = " *" if file_editor.is_modified else ""
         status.update(
-            f"📄 Viewing: {file_path.name}\n"
+            f"📝 Editing: {file_path.name}{modified_indicator}\n"
             f"📂 Path: {file_path}\n"
-            f"⚡ :o to open in nvim | :q to quit"
+            f"⚡ Ctrl+S to save | :q to quit | Full editing enabled"
         )
     
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
-        """Handle single file selection - preview."""
+        """Handle single file selection - load in editor."""
         self.on_file_browser_file_double_clicked(
             FileBrowser.FileDoubleClicked(event.path)
         )
@@ -306,88 +413,44 @@ class TextualJmux(App):
         file_browser = self.query_one("#file_browser", FileBrowser)
         file_browser.focus()
     
-    def action_command_mode(self) -> None:
-        """Open vim-style command mode."""
-        def handle_command_result(command: str | None) -> None:
-            if command:
-                self.run_worker(self.handle_command(command))
-        
-        self.push_screen(CommandScreen(), handle_command_result)
-    
-    async def handle_command(self, command: str) -> None:
-        """Handle vim-style commands."""
-        command = command.strip()
-        
-        # Remove leading : if present
-        if command.startswith(':'):
-            command = command[1:]
-        
-        parts = command.split()
-        if not parts:
-            return
-        
-        cmd = parts[0].lower()
-        
-        if cmd in ['q', 'quit']:
-            self.exit()
-        elif cmd in ['o', 'open'] and len(parts) > 1:
-            # :o filename - open file
-            filename = ' '.join(parts[1:])
-            await self.open_file_by_name(filename)
-        elif cmd in ['e', 'edit'] and len(parts) > 1:
-            # :e filename - edit file in external nvim
-            filename = ' '.join(parts[1:])
-            await self.edit_file_by_name(filename)
-        else:
-            # Show error for unknown commands
+    def action_save_file(self) -> None:
+        """Save the current file."""
+        file_editor = self.query_one("#file_editor", FileEditor)
+        if file_editor.current_file and file_editor.save_file():
             status = self.query_one("#viewer_status", Static)
             status.update(
-                f"❌ Unknown command: {command}\n"
-                f"Available: :q :quit :o <file> :e <file>\n"
-                f"Press : to try again"
+                f"✓ Saved: {file_editor.current_file.name}\n"
+                f"📂 Path: {file_editor.current_file}\n"
+                f"⚡ File saved successfully | :q to quit"
+            )
+        else:
+            status = self.query_one("#viewer_status", Static)
+            status.update(
+                f"❌ Failed to save file\n"
+                f"Make sure you have a file open and write permissions\n"
+                f"⚡ Try again or select another file"
             )
     
-    async def open_file_by_name(self, filename: str) -> None:
-        """Open a file by name in the viewer."""
-        try:
-            file_path = Path(filename)
-            if not file_path.is_absolute():
-                file_path = Path.cwd() / file_path
-            
-            if file_path.exists():
-                self.current_file = str(file_path)
-                file_viewer = self.query_one("#file_viewer", FileViewer)
-                file_viewer.load_file(file_path)
-                
-                status = self.query_one("#viewer_status", Static)
-                status.update(
-                    f"📄 Opened: {file_path.name}\n"
-                    f"📂 Path: {file_path}\n"
-                    f"⚡ :o to open in nvim | :q to quit"
-                )
-            else:
-                status = self.query_one("#viewer_status", Static)
-                status.update(f"❌ File not found: {filename}")
-        except Exception as e:
-            status = self.query_one("#viewer_status", Static)
-            status.update(f"❌ Error opening file: {e}")
+
     
-    async def edit_file_by_name(self, filename: str) -> None:
-        """Open a file by name in external nvim."""
-        try:
-            file_path = Path(filename)
-            if not file_path.is_absolute():
-                file_path = Path.cwd() / file_path
-            
-            if file_path.exists():
-                self.current_file = str(file_path)
-                self.action_open_in_nvim()
-            else:
-                status = self.query_one("#viewer_status", Static)
-                status.update(f"❌ File not found: {filename}")
-        except Exception as e:
-            status = self.query_one("#viewer_status", Static)
-            status.update(f"❌ Error: {e}")
+
+    
+    
+    def _open_file_from_palette(self, file_path: Path) -> None:
+        """Open a file selected from the command palette."""
+        self.current_file = str(file_path)
+        
+        # Update the file editor
+        file_editor = self.query_one("#file_editor", FileEditor)
+        file_editor.load_file(file_path)
+        
+        # Update status
+        status = self.query_one("#viewer_status", Static)
+        status.update(
+            f"📝 Editing: {file_path.name}\n"
+            f"📂 Path: {file_path}\n"
+            f"⚡ Ctrl+S to save | Ctrl+P to find more | :q to quit"
+        )
     
     def action_cancel(self) -> None:
         """Cancel any active operation."""
