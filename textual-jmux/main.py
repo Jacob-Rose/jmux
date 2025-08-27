@@ -15,6 +15,7 @@ from functools import partial
 import subprocess
 import os
 import fnmatch
+import re
 
 
 class FileBrowser(DirectoryTree):
@@ -60,7 +61,6 @@ class FileEditor(TextArea):
                 content = file_path.read_text(encoding='utf-8', errors='ignore')
                 
                 # Strip ANSI escape sequences and other control characters
-                import re
                 ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
                 content = ansi_escape.sub('', content)
                 
@@ -72,6 +72,9 @@ class FileEditor(TextArea):
                 
                 # Set syntax highlighting based on file extension
                 self._set_language_from_extension(file_path.suffix)
+                
+                # Force syntax highlighting update
+                self._force_syntax_highlighting()
                 
                 # Enable editing
                 self.read_only = False
@@ -86,6 +89,11 @@ class FileEditor(TextArea):
             self.text = f"❌ Error loading file: {e}"
             self.read_only = True
             self.current_file = None
+    
+    def _force_syntax_highlighting(self) -> None:
+        """Force syntax highlighting refresh after tree-sitter installation."""
+        # Simply refresh the widget after setting language
+        self.refresh()
     
     def _set_language_from_extension(self, extension: str) -> None:
         """Set syntax highlighting language based on file extension."""
@@ -118,11 +126,18 @@ class FileEditor(TextArea):
         try:
             if extension.lower() in language_map:
                 self.language = language_map[extension.lower()]
+                # Debug: Show what language was set in the border title
+                if hasattr(self, 'border_title'):
+                    self.border_title = f"📝 File Editor ({self.language})"
             else:
                 self.language = None  # Plain text
+                if hasattr(self, 'border_title'):
+                    self.border_title = "📝 File Editor (plain text)"
         except Exception:
             # If syntax highlighting fails, just use plain text
             self.language = None
+            if hasattr(self, 'border_title'):
+                self.border_title = "📝 File Editor (error)"
     
     def save_file(self) -> bool:
         """Save the current content to file."""
@@ -237,6 +252,8 @@ class TabManager(ListView):
         super().__init__(**kwargs)
         self.tabs = []
         self.active_tab = 0
+        # Disable focus for this widget - it should never be focused
+        self.can_focus = False
     
     def add_tab(self, name: str, file_path: Path = None) -> int:
         """Add a new tab and return its index."""
@@ -325,17 +342,37 @@ class TextualJmux(App):
     }
     
     .left-panel {
-        width: 25%;
+        width: 40%;
         background: $surface;
     }
     
-    .middle-panel {
+    .left-panel-focused {
+        width: 40%;
+        background: $surface;
+    }
+    
+    .left-panel-unfocused {
         width: 20%;
         background: $surface;
     }
     
     .right-panel {
-        width: 55%;
+        width: 60%;
+        background: $surface;
+    }
+    
+    .right-panel-focused {
+        width: 80%;
+        background: $surface;
+    }
+    
+    .right-panel-unfocused {
+        width: 60%;
+        background: $surface;
+    }
+    
+    .middle-panel {
+        width: 25%;
         background: $surface;
     }
     
@@ -358,12 +395,21 @@ class TextualJmux(App):
     FileEditor {
         padding: 1;
         background: $panel;
-        color: $text;
         border-title-align: center;
         scrollbar-size: 1 1;
         scrollbar-size-horizontal: 1;
         scrollbar-size-vertical: 1;
     }
+    
+    /* Force syntax highlighting colors using proper Textual selectors */
+    TextArea .syntax_highlight { }
+    
+    FileEditor .syntax_highlight .keyword { color: $accent; }
+    FileEditor .syntax_highlight .string { color: $success; } 
+    FileEditor .syntax_highlight .comment { color: $warning; }
+    FileEditor .syntax_highlight .number { color: $error; }
+    FileEditor .syntax_highlight .builtin { color: $primary; }
+    FileEditor .syntax_highlight .function { color: $secondary; }
     
     Header {
         background: $primary;
@@ -374,13 +420,6 @@ class TextualJmux(App):
     Footer {
         background: $primary;
         color: $text;
-    }
-    
-    .status {
-        height: 3;
-        background: $surface;
-        border: solid $accent;
-        padding: 1;
     }
     """
     
@@ -393,6 +432,8 @@ class TextualJmux(App):
         ("ctrl+tab", "next_tab", "Next tab"),
         ("ctrl+shift+tab", "prev_tab", "Previous tab"),
         ("f", "toggle_files", "Toggle files"),
+        ("tab", "focus_next", "Focus next panel"),
+        ("shift+tab", "focus_previous", "Focus previous panel"), 
         ("escape", "cancel", "Cancel"),
     ]
     
@@ -402,32 +443,23 @@ class TextualJmux(App):
         """Create the application layout."""
         yield Header(show_clock=True)
         
-        with Horizontal():
+        with Horizontal(id="main_horizontal"):
             # Left panel - File browser
-            with Vertical(classes="left-panel panel"):
+            with Vertical(classes="left-panel panel", id="left_panel"):
                 yield FileBrowser("./", id="file_browser")
-                yield Static(
-                    "📁 Navigate files\n"
-                    "💾 Double-click to open\n"
-                    "🔍 : (colon) fuzzy search", 
-                    classes="status",
-                    id="browser_status"
-                )
             
-            # Middle panel - Tab manager
-            with Vertical(classes="middle-panel panel"):
-                yield TabManager(id="tab_manager")
-            
-            # Right panel - File editor  
-            with Vertical(classes="right-panel panel"):
-                yield FileEditor(id="file_editor")
-                yield Static(
-                    "📝 File editor ready\n"
-                    "🔍 : (colon) search | Ctrl+S: save\n"
-                    "📑 Ctrl+Tab: switch | Ctrl+W: close", 
-                    classes="status",
-                    id="viewer_status"
-                )
+            # Right panel - File editor with integrated tab manager
+            with Vertical(classes="right-panel panel", id="right_panel"):
+                with Horizontal():
+                    # Tab manager (embedded in editor panel)
+                    with Vertical(classes="middle-panel panel", id="middle_panel"):
+                        yield TabManager(id="tab_manager")
+                    # File editor with syntax highlighting enabled
+                    yield FileEditor(
+                        show_line_numbers=True,
+                        theme="monokai",
+                        id="file_editor"
+                    )
         
         yield Footer()
     
@@ -445,6 +477,9 @@ class TextualJmux(App):
         # Initialize with a default tab
         tab_manager.add_tab("Welcome", None)
         
+        # Set initial focus to file editor
+        file_editor.focus()
+        
         # Show initial welcome
         file_editor.text = (
             "🚀 Textual jmux - Enhanced Editor\n"
@@ -452,8 +487,9 @@ class TextualJmux(App):
             "Welcome to the modern file editor!\n\n"
             "Features:\n"
             "• Full text editing with syntax highlighting\n"
+            "• Dynamic panel sizing based on focus\n"
             "• Vertical tab system for multiple files\n"
-            "• Ctrl+Tab: switch tabs | Ctrl+W: close tab\n"
+            "• Tab: focus panels | Ctrl+Tab: switch tabs\n"
             "• Ctrl+S to save | : (colon) for fuzzy search\n"
             "• Ctrl+O to open in external nvim\n\n"
             "Select a file from the left panel to start editing."
@@ -516,6 +552,25 @@ class TextualJmux(App):
         """Focus the file browser."""
         file_browser = self.query_one("#file_browser", FileBrowser)
         file_browser.focus()
+        self._update_panel_sizes(file_browser)
+    
+    def action_focus_next(self) -> None:
+        """Toggle focus between file browser and editor only."""
+        focused = self.focused
+        file_browser = self.query_one("#file_browser")
+        file_editor = self.query_one("#file_editor")
+        
+        if focused == file_browser:
+            file_editor.focus()
+            self._update_panel_sizes(file_editor)
+        else:
+            file_browser.focus()
+            self._update_panel_sizes(file_browser)
+    
+    def action_focus_previous(self) -> None:
+        """Toggle focus between file browser and editor only."""
+        # Same as focus_next since we only have two focusable panels
+        self.action_focus_next()
     
     def action_save_file(self) -> None:
         """Save the current file."""
@@ -528,19 +583,11 @@ class TextualJmux(App):
                 tab_manager.tabs[tab_manager.active_tab]['is_modified'] = False
                 tab_manager.update_display()
             
-            status = self.query_one("#viewer_status", Static)
-            status.update(
-                f"✓ Saved: {file_editor.current_file.name}\n"
-                f"📂 Path: {file_editor.current_file}\n"
-                f"⚡ File saved successfully"
-            )
+            # File saved successfully - update title
+            file_editor.border_title = f"📝 {file_editor.current_file.name} ✓"
         else:
-            status = self.query_one("#viewer_status", Static)
-            status.update(
-                f"❌ Failed to save file\n"
-                f"Make sure you have a file open and write permissions\n"
-                f"⚡ Try again or select another file"
-            )
+            # Show error in title
+            file_editor.border_title = "📝 File Editor - Save Failed ❌"
     
 
     
@@ -580,14 +627,10 @@ class TextualJmux(App):
             file_editor = self.query_one("#file_editor", FileEditor)
             file_editor.load_file(file_path)
             
-            # Update status
-            status = self.query_one("#viewer_status", Static)
+            # Update border title with file info and language
             modified_indicator = " *" if file_editor.is_modified else ""
-            status.update(
-                f"📝 Editing: {file_path.name}{modified_indicator}\n"
-                f"📂 Path: {file_path}\n"
-                f"⚡ Tab {tab_index + 1} of {len(tab_manager.tabs)}"
-            )
+            language_info = f" ({file_editor.language})" if file_editor.language else ""
+            file_editor.border_title = f"📝 {file_path.name}{modified_indicator}{language_info}"
         else:
             # Welcome tab or empty tab
             file_editor = self.query_one("#file_editor", FileEditor)
@@ -597,8 +640,9 @@ class TextualJmux(App):
                 "Welcome to the modern file editor!\n\n"
                 "Features:\n"
                 "• Full text editing with syntax highlighting\n"
+                "• Dynamic panel sizing based on focus\n"
                 "• Vertical tab system for multiple files\n"
-                "• Ctrl+Tab: switch tabs | Ctrl+W: close tab\n"
+                "• Tab: focus panels | Ctrl+Tab: switch tabs\n"
                 "• Ctrl+S to save | : (colon) for fuzzy search\n"
                 "• Ctrl+O to open in external nvim\n\n"
                 "Select a file from the left panel to start editing."
@@ -609,6 +653,32 @@ class TextualJmux(App):
     def on_tab_manager_tab_switched(self, event: TabManager.TabSwitched) -> None:
         """Handle tab switch from the tab manager."""
         self._switch_to_tab(event.tab_index)
+    
+    def on_focus(self, event) -> None:
+        """Handle focus changes to resize panels dynamically."""
+        self._update_panel_sizes(event.widget)
+    
+    def _update_panel_sizes(self, focused_widget) -> None:
+        """Update panel sizes based on which widget has focus."""
+        left_panel = self.query_one("#left_panel")
+        right_panel = self.query_one("#right_panel")
+        
+        # Remove all dynamic classes first
+        left_panel.remove_class("left-panel-focused", "left-panel-unfocused")
+        right_panel.remove_class("right-panel-focused", "right-panel-unfocused")
+        
+        # Determine which panel contains the focused widget
+        file_browser = self.query_one("#file_browser")
+        file_editor = self.query_one("#file_editor")
+        
+        if focused_widget == file_browser or focused_widget.parent == left_panel:
+            # File browser focused - expand left panel
+            left_panel.add_class("left-panel-focused")
+            right_panel.add_class("right-panel-unfocused")
+        else:
+            # Editor focused (default) - expand right panel
+            left_panel.add_class("left-panel-unfocused")
+            right_panel.add_class("right-panel-focused")
     
     def action_next_tab(self) -> None:
         """Switch to the next tab."""
