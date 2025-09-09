@@ -197,12 +197,31 @@ echo "$$" > "/tmp/jmux_main_pid"
 # Configuration paths - use temp directory for portable mode
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [[ "$SCRIPT_DIR" == *"/.config/jmux"* ]] || [[ "$SCRIPT_DIR" == *"/usr/local/bin"* ]]; then
-    # Installed mode - use .config
+    # Installed mode - use .config and copy helpers if they don't exist
     CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}/jmux"
+    mkdir -p "$CONFIG_BASE"
+    # Copy helper scripts if they don't exist (for installed mode)
+    if [ -f "$SCRIPT_DIR/../scripts/enter_helper.sh" ] && [ ! -f "$CONFIG_BASE/enter_helper.sh" ]; then
+        cp "$SCRIPT_DIR/../scripts/enter_helper.sh" "$CONFIG_BASE/"
+    fi
+    if [ -f "$SCRIPT_DIR/../scripts/enter_helper_noswitch.sh" ] && [ ! -f "$CONFIG_BASE/enter_helper_noswitch.sh" ]; then
+        cp "$SCRIPT_DIR/../scripts/enter_helper_noswitch.sh" "$CONFIG_BASE/"
+    fi
 else
-    # Portable mode - use temp directory relative to script
+    # Portable mode - use temp directory and copy utilities
     CONFIG_BASE="/tmp/jmux_portable_$$"
     echo "Running in portable mode, config at: $CONFIG_BASE"
+    mkdir -p "$CONFIG_BASE"
+    # Copy session utilities and helpers to portable config so they're always available
+    if [ -f "$SCRIPT_DIR/scripts/jmux_session_utils.sh" ]; then
+        cp "$SCRIPT_DIR/scripts/jmux_session_utils.sh" "$CONFIG_BASE/"
+    fi
+    if [ -f "$SCRIPT_DIR/scripts/enter_helper.sh" ]; then
+        cp "$SCRIPT_DIR/scripts/enter_helper.sh" "$CONFIG_BASE/"
+    fi
+    if [ -f "$SCRIPT_DIR/scripts/enter_helper_noswitch.sh" ]; then
+        cp "$SCRIPT_DIR/scripts/enter_helper_noswitch.sh" "$CONFIG_BASE/"
+    fi
 fi
 RANGER_TEMP="$CONFIG_BASE/ranger_config"
 NVIM_TEMP="$CONFIG_BASE/nvim_config"
@@ -349,154 +368,12 @@ AUTO_SWITCH_SETTING="${JMUX_AUTO_SWITCH:-true}"
 # Apply directory restriction setting (default: true)
 RESTRICT_DIRECTORY="${JMUX_RESTRICT_NAVIGATION:-true}"
 
-# Create the appropriate Enter command and append it to ranger config
+# Configure ranger Enter key mapping
 if [ "$AUTO_SWITCH_SETTING" = "true" ]; then
-    # Create auto-switch helper script
-    cat > "$CONFIG_BASE/enter_helper.sh" << ENTER_EOF
-#!/bin/bash
-
-# Jmux project directory (set during generation)
-JMUX_PROJECT_DIR="$SCRIPT_DIR"
-
-# Fast path-cached sourcing of session utils
-UTILS_CACHE_FILE="/tmp/jmux_utils_path_$$"
-
-# Skip sourcing if functions already exist
-if ! command -v get_jmux_session >/dev/null 2>&1; then
-    # Try cached path first
-    if [ -f "\$UTILS_CACHE_FILE" ] && [ -s "\$UTILS_CACHE_FILE" ]; then
-        CACHED_PATH="\$(cat "\$UTILS_CACHE_FILE")"
-        if [ -f "\$CACHED_PATH" ] && source "\$CACHED_PATH" 2>/dev/null; then
-            # Cache hit - sourced successfully
-            :
-        else
-            # Cache miss - remove stale cache
-            rm -f "\$UTILS_CACHE_FILE"
-        fi
-    fi
-    
-    # If still not loaded, do full search and cache result
-    if ! command -v get_jmux_session >/dev/null 2>&1; then
-        # Start with project-relative paths (works for both portable and installed)
-        POSSIBLE_PATHS=(
-            "\$JMUX_PROJECT_DIR/scripts/jmux_session_utils.sh"
-            "$(dirname "\$0")/../scripts/jmux_session_utils.sh"
-            "$(dirname "\$0")/jmux_session_utils.sh"
-        )
-        
-        # Only add installed paths if running from installed location
-        if [[ "$0" == *"/.config/jmux/"* ]] || [[ "$0" == *"/usr/local/bin/"* ]]; then
-            POSSIBLE_PATHS+=(
-                "/usr/local/bin/jmux-scripts/jmux_session_utils.sh"
-                "$HOME/Documents/jmux/scripts/jmux_session_utils.sh"
-            )
-            
-            # Add jmux command paths for installed systems
-            if command -v jmux >/dev/null 2>&1; then
-                JMUX_DIR="$(dirname "$(readlink -f "$(which jmux)" 2>/dev/null || which jmux)" 2>/dev/null)"
-                [ -n "$JMUX_DIR" ] && POSSIBLE_PATHS+=("$JMUX_DIR/scripts/jmux_session_utils.sh" "$JMUX_DIR/../scripts/jmux_session_utils.sh")
-            fi
-        fi
-        
-        for UTILS_PATH in "${POSSIBLE_PATHS[@]}"; do
-            if [ -f "$UTILS_PATH" ] && source "$UTILS_PATH" 2>/dev/null; then
-                # Cache the successful path
-                echo "\$UTILS_PATH" > "\$UTILS_CACHE_FILE"
-                break
-            fi
-        done
-        
-        # Verify sourcing worked
-        command -v get_jmux_session >/dev/null 2>&1 || { echo "Error: Could not find jmux_session_utils.sh" >&2; exit 1; }
-    fi
-fi
-if is_jmux_session && has_nvim_pane; then
-    send_to_nvim Escape ":lua open_file_in_main_editor('$(readlink -f "$1")')" Enter
-    select_nvim_pane
-    tmux resize-pane -t 0 -x "$(get_nvim_ratio)%"
-else
-    TARGET=$(get_jmux_target)
-    if [ -n "$TARGET" ]; then
-        tmux split-window -t "$TARGET" -h -p 60 "cd '$2' && nvim -u '$HOME/.config/jmux/nvim_config/init.lua' '$(readlink -f "$1")'"
-        select_nvim_pane
-        tmux resize-pane -t 0 -x "$(get_nvim_ratio)%"
-    fi
-fi
-ENTER_EOF
-    chmod +x "$CONFIG_BASE/enter_helper.sh"
+    # Use auto-switch helper (already copied in portable mode)
     echo "map <Enter> shell $CONFIG_BASE/enter_helper.sh %p %d" >> "$RANGER_TEMP/rc.conf"
 else
-    # Create no-switch helper script
-    cat > "$CONFIG_BASE/enter_helper_noswitch.sh" << ENTER_EOF
-#!/bin/bash
-
-# Jmux project directory (set during generation)
-JMUX_PROJECT_DIR="$SCRIPT_DIR"
-
-# Fast path-cached sourcing of session utils
-UTILS_CACHE_FILE="/tmp/jmux_utils_path_$$"
-
-# Skip sourcing if functions already exist
-if ! command -v get_jmux_session >/dev/null 2>&1; then
-    # Try cached path first
-    if [ -f "\$UTILS_CACHE_FILE" ] && [ -s "\$UTILS_CACHE_FILE" ]; then
-        CACHED_PATH="\$(cat "\$UTILS_CACHE_FILE")"
-        if [ -f "\$CACHED_PATH" ] && source "\$CACHED_PATH" 2>/dev/null; then
-            # Cache hit - sourced successfully
-            :
-        else
-            # Cache miss - remove stale cache
-            rm -f "\$UTILS_CACHE_FILE"
-        fi
-    fi
-    
-    # If still not loaded, do full search and cache result
-    if ! command -v get_jmux_session >/dev/null 2>&1; then
-        # Start with project-relative paths (works for both portable and installed)
-        POSSIBLE_PATHS=(
-            "\$JMUX_PROJECT_DIR/scripts/jmux_session_utils.sh"
-            "$(dirname "\$0")/../scripts/jmux_session_utils.sh"
-            "$(dirname "\$0")/jmux_session_utils.sh"
-        )
-        
-        # Only add installed paths if running from installed location
-        if [[ "$0" == *"/.config/jmux/"* ]] || [[ "$0" == *"/usr/local/bin/"* ]]; then
-            POSSIBLE_PATHS+=(
-                "/usr/local/bin/jmux-scripts/jmux_session_utils.sh"
-                "$HOME/Documents/jmux/scripts/jmux_session_utils.sh"
-            )
-            
-            # Add jmux command paths for installed systems
-            if command -v jmux >/dev/null 2>&1; then
-                JMUX_DIR="$(dirname "$(readlink -f "$(which jmux)" 2>/dev/null || which jmux)" 2>/dev/null)"
-                [ -n "$JMUX_DIR" ] && POSSIBLE_PATHS+=("$JMUX_DIR/scripts/jmux_session_utils.sh" "$JMUX_DIR/../scripts/jmux_session_utils.sh")
-            fi
-        fi
-        
-        for UTILS_PATH in "${POSSIBLE_PATHS[@]}"; do
-            if [ -f "$UTILS_PATH" ] && source "$UTILS_PATH" 2>/dev/null; then
-                # Cache the successful path
-                echo "\$UTILS_PATH" > "\$UTILS_CACHE_FILE"
-                break
-            fi
-        done
-        
-        # Verify sourcing worked
-        command -v get_jmux_session >/dev/null 2>&1 || { echo "Error: Could not find jmux_session_utils.sh" >&2; exit 1; }
-    fi
-fi
-if is_jmux_session && has_nvim_pane; then
-    send_to_nvim Escape ":lua open_file_in_main_editor('$(readlink -f "$1")')" Enter
-    # Stay in ranger - don't switch panes
-else
-    TARGET=$(get_jmux_target)
-    if [ -n "$TARGET" ]; then
-        tmux split-window -t "$TARGET" -h -p 60 "cd '$2' && nvim -u '$HOME/.config/jmux/nvim_config/init.lua' '$(readlink -f "$1")'"
-        select_ranger_pane
-    fi
-fi
-ENTER_EOF
-    chmod +x "$CONFIG_BASE/enter_helper_noswitch.sh"
+    # Use no-switch helper (already copied in portable mode)
     echo "map <Enter> shell $CONFIG_BASE/enter_helper_noswitch.sh %p %d" >> "$RANGER_TEMP/rc.conf"
 fi
 
