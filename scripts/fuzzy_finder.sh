@@ -5,6 +5,9 @@
 SEARCH_DIR="${1:-$(pwd)}"
 cd "$SEARCH_DIR"
 
+# Force terminal refresh over SSH
+printf '\033[2J\033[H'
+
 # Fast path-cached sourcing of session utils
 UTILS_CACHE_FILE="/tmp/jmux_utils_path_$$"
 
@@ -55,11 +58,14 @@ SESSION=$(get_jmux_session)
 SESSION_SUFFIX="${SESSION##*-}"
 CACHE_FILE="/tmp/jmux_files_cache_${SESSION_SUFFIX}"
 
+# Force terminal flush before fzf
+stty sane 2>/dev/null || true
+
 # Use session-specific cached file list if available, otherwise fallback to find
 if [ -f "$CACHE_FILE" ]; then
-    SELECTED=$(cat "$CACHE_FILE" | fzf --preview "cat {}" --height=40 --reverse --border)
+    SELECTED=$(cat "$CACHE_FILE" | fzf --preview "cat {}" --height=80 --reverse --border --no-clear)
 else
-    SELECTED=$(find . -type f -not -path '*/.*' | sed 's|^\./||' | fzf --preview "cat {}" --height=40 --reverse --border)
+    SELECTED=$(find . -type f -not -path '*/.*' | sed 's|^\./||' | fzf --preview "cat {}" --height=80 --reverse --border --no-clear)
 fi
 
 if [ -n "$SELECTED" ]; then
