@@ -358,17 +358,24 @@ if ! command -v get_jmux_session >/dev/null 2>&1; then
     
     # If still not loaded, do full search and cache result
     if ! command -v get_jmux_session >/dev/null 2>&1; then
+        # Start with relative paths (portable mode)
         POSSIBLE_PATHS=(
-            "/usr/local/bin/jmux-scripts/jmux_session_utils.sh"
-            "$HOME/Documents/jmux/scripts/jmux_session_utils.sh"
             "$(dirname "$0")/../scripts/jmux_session_utils.sh"
             "$(dirname "$0")/jmux_session_utils.sh"
         )
         
-        # Add jmux-relative paths if available
-        if command -v jmux >/dev/null 2>&1; then
-            JMUX_DIR="$(dirname "$(readlink -f "$(which jmux)" 2>/dev/null || which jmux)" 2>/dev/null)"
-            [ -n "$JMUX_DIR" ] && POSSIBLE_PATHS+=("$JMUX_DIR/scripts/jmux_session_utils.sh" "$JMUX_DIR/../scripts/jmux_session_utils.sh")
+        # Only add installed paths if running from installed location
+        if [[ "$0" == *"/.config/jmux/"* ]] || [[ "$0" == *"/usr/local/bin/"* ]]; then
+            POSSIBLE_PATHS+=(
+                "/usr/local/bin/jmux-scripts/jmux_session_utils.sh"
+                "$HOME/Documents/jmux/scripts/jmux_session_utils.sh"
+            )
+            
+            # Add jmux command paths for installed systems
+            if command -v jmux >/dev/null 2>&1; then
+                JMUX_DIR="$(dirname "$(readlink -f "$(which jmux)" 2>/dev/null || which jmux)" 2>/dev/null)"
+                [ -n "$JMUX_DIR" ] && POSSIBLE_PATHS+=("$JMUX_DIR/scripts/jmux_session_utils.sh" "$JMUX_DIR/../scripts/jmux_session_utils.sh")
+            fi
         fi
         
         for UTILS_PATH in "${POSSIBLE_PATHS[@]}"; do
@@ -422,17 +429,24 @@ if ! command -v get_jmux_session >/dev/null 2>&1; then
     
     # If still not loaded, do full search and cache result
     if ! command -v get_jmux_session >/dev/null 2>&1; then
+        # Start with relative paths (portable mode)
         POSSIBLE_PATHS=(
-            "/usr/local/bin/jmux-scripts/jmux_session_utils.sh"
-            "$HOME/Documents/jmux/scripts/jmux_session_utils.sh"
             "$(dirname "$0")/../scripts/jmux_session_utils.sh"
             "$(dirname "$0")/jmux_session_utils.sh"
         )
         
-        # Add jmux-relative paths if available
-        if command -v jmux >/dev/null 2>&1; then
-            JMUX_DIR="$(dirname "$(readlink -f "$(which jmux)" 2>/dev/null || which jmux)" 2>/dev/null)"
-            [ -n "$JMUX_DIR" ] && POSSIBLE_PATHS+=("$JMUX_DIR/scripts/jmux_session_utils.sh" "$JMUX_DIR/../scripts/jmux_session_utils.sh")
+        # Only add installed paths if running from installed location
+        if [[ "$0" == *"/.config/jmux/"* ]] || [[ "$0" == *"/usr/local/bin/"* ]]; then
+            POSSIBLE_PATHS+=(
+                "/usr/local/bin/jmux-scripts/jmux_session_utils.sh"
+                "$HOME/Documents/jmux/scripts/jmux_session_utils.sh"
+            )
+            
+            # Add jmux command paths for installed systems
+            if command -v jmux >/dev/null 2>&1; then
+                JMUX_DIR="$(dirname "$(readlink -f "$(which jmux)" 2>/dev/null || which jmux)" 2>/dev/null)"
+                [ -n "$JMUX_DIR" ] && POSSIBLE_PATHS+=("$JMUX_DIR/scripts/jmux_session_utils.sh" "$JMUX_DIR/../scripts/jmux_session_utils.sh")
+            fi
         fi
         
         for UTILS_PATH in "${POSSIBLE_PATHS[@]}"; do
