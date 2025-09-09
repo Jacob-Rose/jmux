@@ -4,53 +4,80 @@
 # Helper functions for getting current jmux session and window information
 # Source this file in other scripts: source "$(dirname "$0")/jmux_session_utils.sh"
 
-# Get the current jmux session ID
-get_jmux_session() {
-    local session=$(tmux display-message -p '#S' 2>/dev/null)
-    if [[ "$session" =~ ^jmux- ]]; then
-        echo "$session"
-        return 0
-    else
-        # Fallback for legacy sessions
-        if tmux has-session -t "ide" 2>/dev/null; then
-            echo "ide"
-            return 0
+# Cache for session info to avoid repeated tmux calls
+_JMUX_SESSION_CACHE=""
+_JMUX_WINDOW_CACHE=""
+_JMUX_TARGET_CACHE=""
+_JMUX_HAS_NVIM_CACHE=""
+
+# Get all jmux session info in one tmux call
+_refresh_jmux_cache() {
+    local session_info
+    session_info=$(tmux display-message -p '#S' 2>/dev/null)
+    
+    # Check if valid jmux session
+    if [[ "$session_info" =~ ^jmux- ]] || ([ "$session_info" != "jmux-"* ] && tmux has-session -t "ide" 2>/dev/null); then
+        if [[ ! "$session_info" =~ ^jmux- ]]; then
+            session_info="ide"  # Legacy fallback
         fi
-        return 1
+        
+        _JMUX_SESSION_CACHE="$session_info"
+        
+        # Get window and pane info in one call
+        local window_pane_info
+        window_pane_info=$(tmux list-windows -t "$session_info" 2>/dev/null | head -1)
+        
+        if [ -n "$window_pane_info" ]; then
+            # Extract window name
+            local window=$(echo "$window_pane_info" | cut -d: -f2 | cut -d'*' -f1 | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+            _JMUX_WINDOW_CACHE="$window"
+            _JMUX_TARGET_CACHE="$session_info:$window"
+            
+            # Check if nvim pane exists
+            if tmux list-panes -t "$_JMUX_TARGET_CACHE" 2>/dev/null | grep -q "1:"; then
+                _JMUX_HAS_NVIM_CACHE="yes"
+            else
+                _JMUX_HAS_NVIM_CACHE="no"
+            fi
+        else
+            _JMUX_WINDOW_CACHE=""
+            _JMUX_TARGET_CACHE=""
+            _JMUX_HAS_NVIM_CACHE="no"
+        fi
+    else
+        # Not a jmux session
+        _JMUX_SESSION_CACHE=""
+        _JMUX_WINDOW_CACHE=""
+        _JMUX_TARGET_CACHE=""
+        _JMUX_HAS_NVIM_CACHE="no"
     fi
 }
 
-# Get the current jmux main window name (the one with ranger/nvim)
+# Get the current jmux session ID
+get_jmux_session() {
+    [ -z "$_JMUX_SESSION_CACHE" ] && _refresh_jmux_cache
+    if [ -n "$_JMUX_SESSION_CACHE" ]; then
+        echo "$_JMUX_SESSION_CACHE"
+        return 0
+    fi
+    return 1
+}
+
+# Get the current jmux main window name
 get_jmux_window() {
-    local session=$(get_jmux_session)
-    if [ -z "$session" ]; then
-        return 1
-    fi
-    
-    # Find the window that contains "jmux -" (main development window)
-    local window=$(tmux list-windows -t "$session" 2>/dev/null | grep "jmux -" | head -1 | cut -d: -f2 | cut -d'*' -f1 | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
-    if [ -n "$window" ]; then
-        echo "$window"
+    [ -z "$_JMUX_WINDOW_CACHE" ] && _refresh_jmux_cache
+    if [ -n "$_JMUX_WINDOW_CACHE" ]; then
+        echo "$_JMUX_WINDOW_CACHE"
         return 0
     fi
-    
-    # Fallback: get the first window  
-    window=$(tmux list-windows -t "$session" 2>/dev/null | head -1 | cut -d: -f2 | cut -d'*' -f1 | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
-    if [ -n "$window" ]; then
-        echo "$window"
-        return 0
-    fi
-    
     return 1
 }
 
 # Get the full session:window identifier for jmux
 get_jmux_target() {
-    local session=$(get_jmux_session)
-    local window=$(get_jmux_window)
-    
-    if [ -n "$session" ] && [ -n "$window" ]; then
-        echo "$session:$window"
+    [ -z "$_JMUX_TARGET_CACHE" ] && _refresh_jmux_cache
+    if [ -n "$_JMUX_TARGET_CACHE" ]; then
+        echo "$_JMUX_TARGET_CACHE"
         return 0
     fi
     return 1
@@ -116,12 +143,9 @@ select_nvim_pane() {
 
 # Check if nvim pane exists
 has_nvim_pane() {
-    local target=$(get_jmux_target)
-    if [ -n "$target" ]; then
-        tmux list-panes -t "$target" 2>/dev/null | grep -q "1:"
-        return $?
-    fi
-    return 1
+    [ -z "$_JMUX_HAS_NVIM_CACHE" ] && _refresh_jmux_cache
+    [ "$_JMUX_HAS_NVIM_CACHE" = "yes" ]
+    return $?
 }
 
 # Get environment-appropriate focused ratios
