@@ -5,9 +5,16 @@
 SEARCH_DIR="${1:-$(pwd)}"
 cd "$SEARCH_DIR"
 
-# Force tmux to refresh display for SSH
+# Debug: Log to see what's happening
+echo "DEBUG: fuzzy_finder starting" > /tmp/fuzzy_debug.log
+date >> /tmp/fuzzy_debug.log
+
+# Force tmux to refresh display for SSH and send a dummy key to trigger display
 tmux refresh-client 2>/dev/null || true
 sleep 0.1
+
+echo "DEBUG: About to start fzf" >> /tmp/fuzzy_debug.log
+date >> /tmp/fuzzy_debug.log
 
 # Fast path-cached sourcing of session utils
 UTILS_CACHE_FILE="/tmp/jmux_utils_path_$$"
@@ -67,11 +74,15 @@ export TERM="${TERM:-xterm-256color}"
 exec < /dev/tty
 
 # Use session-specific cached file list if available, otherwise fallback to find
+echo "DEBUG: Starting fzf now" >> /tmp/fuzzy_debug.log
 if [ -f "$CACHE_FILE" ]; then
-    SELECTED=$(cat "$CACHE_FILE" | unbuffer fzf --height=80 2>/dev/null || cat "$CACHE_FILE" | fzf --height=80)
+    echo "DEBUG: Using cache file" >> /tmp/fuzzy_debug.log
+    SELECTED=$(cat "$CACHE_FILE" | fzf --height=80 2>> /tmp/fuzzy_debug.log)
 else
-    SELECTED=$(find . -type f -not -path '*/.*' | sed 's|^\./||' | unbuffer fzf --height=80 2>/dev/null || find . -type f -not -path '*/.*' | sed 's|^\./||' | fzf --height=80)
+    echo "DEBUG: Using find" >> /tmp/fuzzy_debug.log
+    SELECTED=$(find . -type f -not -path '*/.*' | sed 's|^\./||' | fzf --height=80 2>> /tmp/fuzzy_debug.log)
 fi
+echo "DEBUG: fzf finished, selected: $SELECTED" >> /tmp/fuzzy_debug.log
 
 if [ -n "$SELECTED" ]; then
     # Use the new file opening function to ensure it opens in main editor
