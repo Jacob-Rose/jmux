@@ -5,16 +5,9 @@
 SEARCH_DIR="${1:-$(pwd)}"
 cd "$SEARCH_DIR"
 
-# Debug: Log to see what's happening
-echo "DEBUG: fuzzy_finder starting" > /tmp/fuzzy_debug.log
-date >> /tmp/fuzzy_debug.log
-
-# Force tmux to refresh display for SSH and send a dummy key to trigger display
+# Force tmux to refresh display for SSH
 tmux refresh-client 2>/dev/null || true
 sleep 0.1
-
-echo "DEBUG: About to start fzf" >> /tmp/fuzzy_debug.log
-date >> /tmp/fuzzy_debug.log
 
 # Fast path-cached sourcing of session utils
 UTILS_CACHE_FILE="/tmp/jmux_utils_path_$$"
@@ -55,8 +48,29 @@ if ! command -v get_jmux_session >/dev/null 2>&1; then
     fi
 fi
 
+# Load logging utilities
+if ! command -v log_debug >/dev/null 2>&1; then
+    SCRIPT_DIR="$(dirname "$0")"
+    LOGGING_PATHS=(
+        "$HOME/Documents/jmux/scripts/jmux_logging_utilities.sh"
+        "$SCRIPT_DIR/jmux_logging_utilities.sh"
+        "/usr/local/bin/jmux-scripts/jmux_logging_utilities.sh"
+    )
+    
+    for LOGGING_PATH in "${LOGGING_PATHS[@]}"; do
+        if [ -f "$LOGGING_PATH" ] && source "$LOGGING_PATH" 2>/dev/null; then
+            break
+        fi
+    done
+fi
+
+# Clear previous logs and start logging
+clear_log "fuzzy_finder" 2>/dev/null || true
+log_debug "fuzzy_finder" "Starting fuzzy finder in directory: $SEARCH_DIR"
+
 # Check if we're in a jmux session
 if ! is_jmux_session; then
+    log_error "fuzzy_finder" "Not running in a jmux session"
     echo "Error: Not running in a jmux session"
     exit 1
 fi
@@ -74,15 +88,15 @@ export TERM="${TERM:-xterm-256color}"
 exec < /dev/tty
 
 # Use session-specific cached file list if available, otherwise fallback to find
-echo "DEBUG: Starting fzf now" >> /tmp/fuzzy_debug.log
+log_debug "fuzzy_finder" "About to start fzf"
 if [ -f "$CACHE_FILE" ]; then
-    echo "DEBUG: Using cache file" >> /tmp/fuzzy_debug.log
-    SELECTED=$(cat "$CACHE_FILE" | fzf --height=80 2>> /tmp/fuzzy_debug.log)
+    log_debug "fuzzy_finder" "Using cached file list from: $CACHE_FILE"
+    SELECTED=$(cat "$CACHE_FILE" | fzf --height=80)
 else
-    echo "DEBUG: Using find" >> /tmp/fuzzy_debug.log
-    SELECTED=$(find . -type f -not -path '*/.*' | sed 's|^\./||' | fzf --height=80 2>> /tmp/fuzzy_debug.log)
+    log_debug "fuzzy_finder" "Using find command to generate file list"
+    SELECTED=$(find . -type f -not -path '*/.*' | sed 's|^\./||' | fzf --height=80)
 fi
-echo "DEBUG: fzf finished, selected: $SELECTED" >> /tmp/fuzzy_debug.log
+log_debug "fuzzy_finder" "fzf finished, selected file: $SELECTED"
 
 if [ -n "$SELECTED" ]; then
     # Use the new file opening function to ensure it opens in main editor
