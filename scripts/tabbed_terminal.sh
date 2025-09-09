@@ -46,16 +46,12 @@ if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
 SESSION_NAME="__SESSION_NAME__"
 
 # Create the command palette interface
-echo "╔════════════════════════════════════════╗"
-echo "║            JMUX COMMAND PALETTE        ║"
-echo "╠════════════════════════════════════════╣"
-echo "║  q - Return to jmux                    ║"
-echo "║  1 - Switch to terminal 1              ║" 
-echo "║  2 - Switch to terminal 2              ║"
-echo "║  3 - Switch to terminal 3              ║"
-echo "║                                        ║"
-echo "║  Press any key to cancel               ║"
-echo "╚════════════════════════════════════════╝"
+echo "q - Return to jmux"
+echo "1 - Switch to terminal 1" 
+echo "2 - Switch to terminal 2"
+echo "3 - Switch to terminal 3"
+echo ""
+echo "Press any key to cancel"
 echo
 
 # Read single character input
@@ -146,16 +142,12 @@ cat > "$COMMAND_PALETTE" << 'PALETTE_EOF'
 SESSION_NAME="__SESSION_NAME__"
 
 # Create the command palette interface
-echo "╔════════════════════════════════════════╗"
-echo "║            JMUX COMMAND PALETTE        ║"
-echo "╠════════════════════════════════════════╣"
-echo "║  q - Return to jmux                    ║"
-echo "║  1 - Switch to terminal 1              ║" 
-echo "║  2 - Switch to terminal 2              ║"
-echo "║  3 - Switch to terminal 3              ║"
-echo "║                                        ║"
-echo "║  Press any key to cancel               ║"
-echo "╚════════════════════════════════════════╝"
+echo "q - Return to jmux"
+echo "1 - Switch to terminal 1" 
+echo "2 - Switch to terminal 2"
+echo "3 - Switch to terminal 3"
+echo ""
+echo "Press any key to cancel"
 echo
 
 # Read single character input
