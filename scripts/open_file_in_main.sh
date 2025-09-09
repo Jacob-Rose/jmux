@@ -5,16 +5,25 @@
 FILEPATH="$1"
 CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}/jmux"
 
+# Load session utilities
+SCRIPT_DIR="$(dirname "$0")"
+source "$SCRIPT_DIR/jmux_session_utils.sh"
+
 if [ -z "$FILEPATH" ]; then
     echo "Usage: $0 <filepath>"
     exit 1
 fi
 
-# Send command to main nvim to open file in main editor window (not buffer list)
-tmux send-keys -t ide:dev.1 "Escape" 
-tmux send-keys -t ide:dev.1 ":lua open_file_in_main_editor('$(readlink -f "$FILEPATH")')" Enter
+# Check if we're in a jmux session
+if ! is_jmux_session; then
+    echo "Error: Not running in a jmux session"
+    exit 1
+fi
 
-# Focus the main dev window and main pane
-tmux select-window -t ide:dev
-tmux select-pane -t 1
-tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%
+# Send command to main nvim to open file in main editor window (not buffer list)
+send_to_nvim "Escape" 
+send_to_nvim ":lua open_file_in_main_editor('$(readlink -f "$FILEPATH")')" "Enter"
+
+# Focus the main window and nvim pane
+select_nvim_pane
+tmux resize-pane -t 0 -x "$(get_nvim_ratio)%"

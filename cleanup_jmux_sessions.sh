@@ -5,11 +5,19 @@
 
 echo "Cleaning up orphaned jmux sessions..."
 
-# Kill orphaned tmux sessions
-orphaned_sessions=$(tmux list-sessions 2>/dev/null | grep -E "^(ide|jmux-persist-terminal):" || true)
+# Find and kill orphaned jmux sessions
+orphaned_sessions=$(tmux list-sessions 2>/dev/null | grep -E "^(jmux-|ide|jmux-persist-terminal):" || true)
 if [ -n "$orphaned_sessions" ]; then
     echo "Found orphaned jmux sessions:"
     echo "$orphaned_sessions"
+    
+    # Kill all jmux sessions
+    tmux list-sessions 2>/dev/null | grep "^jmux-" | cut -d: -f1 | while read session; do
+        echo "Killing session: $session"
+        tmux kill-session -t "$session" 2>/dev/null || true
+    done
+    
+    # Kill legacy sessions
     tmux kill-session -t ide 2>/dev/null || true
     tmux kill-session -t jmux-persist-terminal 2>/dev/null || true
 fi
@@ -25,14 +33,32 @@ fi
 
 # Clean up old files
 echo "Cleaning up temporary files..."
-rm -f /tmp/jmux_files_cache 2>/dev/null || true
-rm -f /tmp/jmux_cache_pid 2>/dev/null || true
+rm -f /tmp/jmux_files_cache* 2>/dev/null || true
+rm -f /tmp/jmux_cache_pid* 2>/dev/null || true
 rm -f /tmp/jmux_main_pid 2>/dev/null || true
 rm -f /tmp/jmux_cleanup_* 2>/dev/null || true
 rm -f /tmp/jmux_cache_script_*.sh 2>/dev/null || true
+rm -f /tmp/jmux_wrapper_*.sh 2>/dev/null || true
 
 # Clean up PID files older than 1 hour
 find /tmp -name "jmux_session_*.pid" -mmin +60 -delete 2>/dev/null || true
+
+# Clean up stale session metadata
+SESSIONS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/jmux/sessions"
+if [ -d "$SESSIONS_DIR" ]; then
+    echo "Cleaning up stale session metadata..."
+    if ls "$SESSIONS_DIR"/*.meta >/dev/null 2>&1; then
+        for meta_file in "$SESSIONS_DIR"/*.meta; do
+            [ -f "$meta_file" ] || continue
+            
+            session_id=$(basename "$meta_file" .meta)
+            if ! tmux has-session -t "$session_id" 2>/dev/null; then
+                echo "Removing stale metadata: $session_id"
+                rm -f "$meta_file"
+            fi
+        done
+    fi
+fi
 
 echo "Cleanup completed."
 

@@ -2,6 +2,14 @@
 
 # jmux: A tmux-based IDE with ranger and nvim
 # Usage: jmux [directory]
+
+# Set terminal title for status bars
+WORK_DIR_FOR_TITLE="${1:-$(pwd)}"
+WORK_DIR_FOR_TITLE="$(cd "$WORK_DIR_FOR_TITLE" 2>/dev/null && pwd || echo "$WORK_DIR_FOR_TITLE")"
+TERMINAL_TITLE="jmux - $(basename "$WORK_DIR_FOR_TITLE")"
+
+# Set terminal title using ANSI escape codes
+printf '\033]0;%s\007' "$TERMINAL_TITLE"
 #
 # Features:
 #   - File manager (ranger) with nvim integration
@@ -16,36 +24,105 @@
 # The script includes comprehensive cleanup on exit, but in extreme cases
 # (system crashes, kill -9, etc.) manual cleanup may be needed.
 
-# Set working directory (use argument or current directory)
-WORK_DIR="${1:-$(pwd)}"
+# Handle command line arguments for session management
+case "${1:-}" in
+    "list")
+        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+        if [ -f "$SCRIPT_DIR/scripts/session_manager.sh" ]; then
+            "$SCRIPT_DIR/scripts/session_manager.sh" list
+        else
+            # Try installed location
+            "/usr/local/bin/jmux-scripts/session_manager.sh" list 2>/dev/null || echo "Session manager not found."
+        fi
+        exit 0
+        ;;
+    "kill")
+        if [ -z "$2" ]; then
+            echo "Usage: jmux kill <session_id>"
+            echo "Use 'jmux list' to see available sessions."
+            exit 1
+        fi
+        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+        if [ -f "$SCRIPT_DIR/scripts/session_manager.sh" ]; then
+            "$SCRIPT_DIR/scripts/session_manager.sh" kill "$2"
+        else
+            "/usr/local/bin/jmux-scripts/session_manager.sh" kill "$2" 2>/dev/null || echo "Session manager not found."
+        fi
+        exit 0
+        ;;
+    "kill-all")
+        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+        if [ -f "$SCRIPT_DIR/scripts/session_manager.sh" ]; then
+            "$SCRIPT_DIR/scripts/session_manager.sh" kill-all
+        else
+            "/usr/local/bin/jmux-scripts/session_manager.sh" kill-all 2>/dev/null || echo "Session manager not found."
+        fi
+        exit 0
+        ;;
+    "attach")
+        if [ -z "$2" ]; then
+            echo "Usage: jmux attach <session_id>"
+            echo "Use 'jmux list' to see available sessions."
+            exit 1
+        fi
+        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+        if [ -f "$SCRIPT_DIR/scripts/session_manager.sh" ]; then
+            "$SCRIPT_DIR/scripts/session_manager.sh" attach "$2"
+        else
+            "/usr/local/bin/jmux-scripts/session_manager.sh" attach "$2" 2>/dev/null || echo "Session manager not found."
+        fi
+        exit 0
+        ;;
+esac
+
+# Set working directory (use argument or current directory, skipping session management commands)
+if [[ "$1" =~ ^(list|kill|kill-all|attach)$ ]]; then
+    WORK_DIR="$(pwd)"
+else
+    WORK_DIR="${1:-$(pwd)}"
+fi
 WORK_DIR="$(cd "$WORK_DIR" && pwd)"  # Get absolute path
 
-# Check for stale jmux sessions and offer to clean them up
-check_stale_sessions() {
-    local stale_sessions="$(tmux list-sessions 2>/dev/null | grep "^ide:" || true)"
-    if [ -n "$stale_sessions" ]; then
-        echo "Warning: Found existing jmux session(s):"
-        echo "$stale_sessions"
+# Load session manager functions
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/scripts/session_manager.sh" ]; then
+    SESSION_MANAGER="$SCRIPT_DIR/scripts/session_manager.sh"
+elif [ -f "/usr/local/bin/jmux-scripts/session_manager.sh" ]; then
+    SESSION_MANAGER="/usr/local/bin/jmux-scripts/session_manager.sh"
+else
+    echo "Error: Session manager not found."
+    exit 1
+fi
+
+# Check if there's already a session for this directory
+check_existing_session() {
+    local existing_session="$($SESSION_MANAGER find-for-dir "$WORK_DIR" 2>/dev/null || true)"
+    if [ -n "$existing_session" ]; then
+        echo "Found existing jmux session for this directory: $existing_session"
+        read -p "Attach to existing session? [Y/n]: " -n 1 -r
         echo ""
-        read -p "Clean up existing session(s)? [y/N]: " -n 1 -r
-        echo ""
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            tmux kill-session -t ide 2>/dev/null || true
-            echo "Existing session cleaned up."
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            echo "Creating new session..."
         else
-            echo "Proceeding with existing session (may cause conflicts)..."
+            echo "Attaching to existing session: $existing_session"
+            "$SESSION_MANAGER" attach "$existing_session"
+            exit 0
         fi
     fi
 }
 
-# Only check for stale sessions in interactive mode
+# Only check for existing sessions in interactive mode
 if [ -t 0 ]; then
-    check_stale_sessions
+    check_existing_session
 fi
 
-# Store session info for cleanup tracking
-JMUX_SESSION_ID="jmux-$$"  # Use PID for unique session ID
-JMUX_PID_FILE="/tmp/jmux_session_$$.pid"
+# Generate unique session ID and store session info
+JMUX_SESSION_ID="$($SESSION_MANAGER generate-id "$WORK_DIR")"
+JMUX_PID_FILE="/tmp/jmux_session_${JMUX_SESSION_ID##*-}.pid"
+START_TIME=$(date +%s)
+
+# Create session metadata
+"$SESSION_MANAGER" create-meta "$JMUX_SESSION_ID" "$WORK_DIR" "$START_TIME" "$$"
 
 # Comprehensive cleanup function 
 cleanup() {
@@ -77,18 +154,19 @@ cleanup() {
     pkill -f "jmux_files_cache" 2>/dev/null || true
     
     # Force kill any remaining tmux sessions that might be orphaned
-    # First try graceful shutdown
-    if tmux has-session -t ide 2>/dev/null; then
-        tmux kill-session -t ide 2>/dev/null || true
-    fi
-    
-    # Also check for any sessions with our PID pattern
+    # First try graceful shutdown of our session
     if tmux has-session -t "$JMUX_SESSION_ID" 2>/dev/null; then
         tmux kill-session -t "$JMUX_SESSION_ID" 2>/dev/null || true
     fi
     
+    # Clean up session metadata
+    if [ -n "$SESSION_MANAGER" ]; then
+        SESSIONS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/jmux/sessions"
+        rm -f "$SESSIONS_DIR/$JMUX_SESSION_ID.meta" 2>/dev/null || true
+    fi
+    
     # Nuclear option: kill any tmux processes that might be stuck
-    local tmux_pids="$(pgrep -f "tmux.*ide" 2>/dev/null || true)"
+    local tmux_pids="$(pgrep -f "tmux.*$JMUX_SESSION_ID" 2>/dev/null || true)"
     if [ -n "$tmux_pids" ]; then
         echo "$tmux_pids" | xargs kill 2>/dev/null || true
         sleep 0.1
@@ -180,6 +258,9 @@ set colorscheme default
 # Use 3 columns with files taking most space
 set column_ratios 1,1,2
 
+# Enable mouse support
+set mouse_enabled true
+
 # Prioritize filename over extension when truncating
 set dirname_in_tabs true
 set unicode_ellipsis true
@@ -192,6 +273,8 @@ unmap l
 # Let q work normally (quit ranger), wrapper will handle cleanup
 # Disable right arrow from opening files - only allow directory navigation
 map <right> eval fm.cd(fm.thisfile.path) if fm.thisfile.is_directory else None
+
+RESTRICT_NAV_PLACEHOLDER
 
 # Switch between panes with Tab (toggle between ranger and nvim)
 map <TAB> shell tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%
@@ -247,17 +330,83 @@ fi
 # Apply auto-switch to nvim setting (default: true)
 AUTO_SWITCH_SETTING="${JMUX_AUTO_SWITCH:-true}"
 
+# Apply directory restriction setting (default: true)
+RESTRICT_DIRECTORY="${JMUX_RESTRICT_NAVIGATION:-true}"
+
 # Create the appropriate Enter command and append it to ranger config
 if [ "$AUTO_SWITCH_SETTING" = "true" ]; then
-    # Auto-switch to nvim after opening file
-    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; tmux select-window -t ide:dev; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi" >> "$RANGER_TEMP/rc.conf"
+    # Create auto-switch helper script
+    cat > "$CONFIG_BASE/enter_helper.sh" << 'ENTER_EOF'
+#!/bin/bash
+# Try multiple locations for session utils
+for UTILS_PATH in "/usr/local/bin/jmux-scripts/jmux_session_utils.sh" \
+                  "$HOME/Documents/jmux/scripts/jmux_session_utils.sh" \
+                  "$(dirname "$0")/jmux_session_utils.sh"; do
+    if [ -f "$UTILS_PATH" ]; then
+        source "$UTILS_PATH"
+        break
+    fi
+done
+if is_jmux_session && has_nvim_pane; then
+    send_to_nvim Escape ":lua open_file_in_main_editor('$(readlink -f "$1")')" Enter
+    select_nvim_pane
+    tmux resize-pane -t 0 -x "$(get_nvim_ratio)%"
 else
-    # Stay in ranger after opening file
-    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 0; fi" >> "$RANGER_TEMP/rc.conf"
+    TARGET=$(get_jmux_target)
+    if [ -n "$TARGET" ]; then
+        tmux split-window -t "$TARGET" -h -p 60 "cd '$2' && nvim -u '$HOME/.config/jmux/nvim_config/init.lua' '$(readlink -f "$1")'"
+        select_nvim_pane
+        tmux resize-pane -t 0 -x "$(get_nvim_ratio)%"
+    fi
+fi
+ENTER_EOF
+    chmod +x "$CONFIG_BASE/enter_helper.sh"
+    echo "map <Enter> shell \$HOME/.config/jmux/enter_helper.sh %p %d" >> "$RANGER_TEMP/rc.conf"
+else
+    # Create no-switch helper script
+    cat > "$CONFIG_BASE/enter_helper_noswitch.sh" << 'ENTER_EOF'
+#!/bin/bash
+# Try multiple locations for session utils
+for UTILS_PATH in "/usr/local/bin/jmux-scripts/jmux_session_utils.sh" \
+                  "$HOME/Documents/jmux/scripts/jmux_session_utils.sh" \
+                  "$(dirname "$0")/jmux_session_utils.sh"; do
+    if [ -f "$UTILS_PATH" ]; then
+        source "$UTILS_PATH"
+        break
+    fi
+done
+if is_jmux_session && has_nvim_pane; then
+    send_to_nvim Escape ":lua open_file_in_main_editor('$(readlink -f "$1")')" Enter
+    # Stay in ranger - don't switch panes
+else
+    TARGET=$(get_jmux_target)
+    if [ -n "$TARGET" ]; then
+        tmux split-window -t "$TARGET" -h -p 60 "cd '$2' && nvim -u '$HOME/.config/jmux/nvim_config/init.lua' '$(readlink -f "$1")'"
+        select_ranger_pane
+    fi
+fi
+ENTER_EOF
+    chmod +x "$CONFIG_BASE/enter_helper_noswitch.sh"
+    echo "map <Enter> shell \$HOME/.config/jmux/enter_helper_noswitch.sh %p %d" >> "$RANGER_TEMP/rc.conf"
 fi
 
-# Remove the placeholder line
+# Apply directory restriction if enabled
+if [ "$RESTRICT_DIRECTORY" = "true" ]; then
+    cat >> "$RANGER_TEMP/rc.conf" << 'RESTRICT_EOF'
+
+# Restrict navigation to stay within the project directory
+# Override keys that would navigate to parent directories - only allow if parent is within work dir
+map h eval fm.move(left=1) if '$WORK_DIR' in os.path.abspath(os.path.join(fm.thisdir.path, '..')) else None
+map <left> eval fm.move(left=1) if '$WORK_DIR' in os.path.abspath(os.path.join(fm.thisdir.path, '..')) else None
+map <backspace> eval fm.move(left=1) if '$WORK_DIR' in os.path.abspath(os.path.join(fm.thisdir.path, '..')) else None
+RESTRICT_EOF
+    # Replace placeholder with actual work dir
+    sed -i "s|\$WORK_DIR|$WORK_DIR|g" "$RANGER_TEMP/rc.conf"
+fi
+
+# Remove the placeholder lines
 sed -i '/ENTER_MAPPING_PLACEHOLDER/d' "$RANGER_TEMP/rc.conf"
+sed -i '/RESTRICT_NAV_PLACEHOLDER/d' "$RANGER_TEMP/rc.conf"
 
 # Nvim config
 cat > "$NVIM_TEMP/init.lua" <<'EOF'
@@ -394,60 +543,67 @@ EOF
 # Make all copied scripts executable
 chmod +x "$CONFIG_BASE"/*.sh
 
-# Clean up any existing sessions before starting
-cleanup_existing_sessions() {
-    # Kill any existing IDE sessions
-    tmux kill-session -t ide 2>/dev/null || true
-    tmux kill-session -t "$JMUX_SESSION_ID" 2>/dev/null || true
-    
+# Clean up any orphaned processes before starting
+cleanup_before_start() {
     # Clean up any orphaned jmux processes
     pkill -f "jmux_files_cache" 2>/dev/null || true
     
     # Clean up old PID files (older than 1 hour)
     find /tmp -name "jmux_session_*.pid" -mmin +60 -delete 2>/dev/null || true
+    
+    # Clean up stale session metadata
+    "$SESSION_MANAGER" cleanup-stale 2>/dev/null || true
 }
 
-cleanup_existing_sessions
+cleanup_before_start
 
 # Create a wrapper script that ensures cleanup on ranger exit
-cat > "/tmp/jmux_wrapper_$$.sh" << 'WRAPPER_EOF'
+WRAPPER_SCRIPT="/tmp/jmux_wrapper_${JMUX_SESSION_ID##*-}.sh"
+cat > "$WRAPPER_SCRIPT" << 'WRAPPER_EOF'
 #!/bin/bash
 cleanup_on_exit() {
     echo "Ranger exited, cleaning up..."
-    tmux kill-session -t ide 2>/dev/null || true
+    SESSION_ID="JMUX_SESSION_ID_PLACEHOLDER"
+    tmux kill-session -t "$SESSION_ID" 2>/dev/null || true
     pkill -f "jmux_files_cache" 2>/dev/null || true
-    rm -f /tmp/jmux_* 2>/dev/null || true
+    rm -f /tmp/jmux_*"${SESSION_ID##*-}"* 2>/dev/null || true
     exit 0
 }
 trap cleanup_on_exit EXIT INT TERM
 WRAPPER_EOF
 
-echo "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'" >> "/tmp/jmux_wrapper_$$.sh"
-chmod +x "/tmp/jmux_wrapper_$$.sh"
+# Replace placeholder with actual session ID
+sed -i "s/JMUX_SESSION_ID_PLACEHOLDER/$JMUX_SESSION_ID/g" "$WRAPPER_SCRIPT"
+echo "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'" >> "$WRAPPER_SCRIPT"
+chmod +x "$WRAPPER_SCRIPT"
 
 # Start tmux session with the wrapper
-tmux new-session -d -s ide "bash /tmp/jmux_wrapper_$$.sh"
-tmux rename-window 'dev'
+tmux new-session -d -s "$JMUX_SESSION_ID" "bash $WRAPPER_SCRIPT"
+tmux rename-window -t "$JMUX_SESSION_ID" "jmux - $(basename "$WORK_DIR")"
 
 # Pre-cache file list for faster fzf startup with parent process monitoring
-if ! tmux list-windows -t ide | grep -q 'fzf-cache'; then
-    tmux new-window -t ide -n 'fzf-cache' -d
-    tmux send-keys -t ide:fzf-cache "cd '$WORK_DIR'" Enter
+CACHE_WINDOW_NAME="fzf-cache"
+if ! tmux list-windows -t "$JMUX_SESSION_ID" | grep -q "$CACHE_WINDOW_NAME"; then
+    tmux new-window -t "$JMUX_SESSION_ID" -n "$CACHE_WINDOW_NAME" -d
+    tmux send-keys -t "$JMUX_SESSION_ID:$CACHE_WINDOW_NAME" "cd '$WORK_DIR'" Enter
     # Create cache script with proper PID tracking
-    cat > "/tmp/jmux_cache_script_$$.sh" << EOF
+    CACHE_SCRIPT="/tmp/jmux_cache_script_${JMUX_SESSION_ID##*-}.sh"
+    cat > "$CACHE_SCRIPT" << EOF
 #!/bin/bash
 PARENT_PID=$$
-echo \$\$ > /tmp/jmux_cache_pid
+CACHE_PID_FILE="/tmp/jmux_cache_pid_${JMUX_SESSION_ID##*-}"
+CACHE_FILE="/tmp/jmux_files_cache_${JMUX_SESSION_ID##*-}"
+echo \$\$ > "\$CACHE_PID_FILE"
 while kill -0 \$PARENT_PID 2>/dev/null; do 
-    find . -type f -not -path '*/.*' | sed 's|^\./||' > /tmp/jmux_files_cache 2>/dev/null
+    find . -type f -not -path '*/.*' | sed 's|^\./||' > "\$CACHE_FILE" 2>/dev/null
     sleep 10
 done
 # Parent died, clean up and exit
-rm -f /tmp/jmux_cache_pid /tmp/jmux_files_cache /tmp/jmux_cache_script_$$.sh
-tmux kill-session -t ide 2>/dev/null || true
+rm -f "\$CACHE_PID_FILE" "\$CACHE_FILE" "$CACHE_SCRIPT"
+tmux kill-session -t "$JMUX_SESSION_ID" 2>/dev/null || true
 EOF
-    chmod +x "/tmp/jmux_cache_script_$$.sh"
-    tmux send-keys -t ide:fzf-cache "bash /tmp/jmux_cache_script_$$.sh" Enter
+    chmod +x "$CACHE_SCRIPT"
+    tmux send-keys -t "$JMUX_SESSION_ID:$CACHE_WINDOW_NAME" "bash $CACHE_SCRIPT" Enter
 fi
 
 # Enable mouse mode for better pane interaction
@@ -455,19 +611,25 @@ tmux set-option -g mouse on
 tmux set-option -g focus-events on
 
 # Set up session hooks for proper cleanup
-tmux set-hook -t ide session-closed 'run-shell "pkill -f \"find.*jmux_files_cache\""'
+tmux set-hook -t "$JMUX_SESSION_ID" session-closed 'run-shell "pkill -f \"find.*jmux_files_cache\"; rm -f /tmp/jmux_*"'
 
 # Focus on ranger window initially  
-tmux select-window -t ide:dev
+tmux select-window -t "$JMUX_SESSION_ID:dev"
 tmux select-pane -t 0
 
+# Show session info before attaching
+echo "Starting jmux session: $JMUX_SESSION_ID"
+echo "Working directory: $WORK_DIR"
+echo "Use 'jmux list' to see all active sessions"
+echo ""
+
 # Attach to the session and handle cleanup when it ends
-if tmux has-session -t ide 2>/dev/null; then
+if tmux has-session -t "$JMUX_SESSION_ID" 2>/dev/null; then
     # Disable the EXIT trap temporarily to avoid double cleanup
     trap - EXIT
     
     # Attach to session - this will block until session ends
-    tmux attach-session -t ide
+    tmux attach-session -t "$JMUX_SESSION_ID"
     
     # When we get here, the session has ended naturally
     # Re-enable cleanup for any remaining processes
