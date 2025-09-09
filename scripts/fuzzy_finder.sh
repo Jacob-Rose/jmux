@@ -57,9 +57,9 @@ CACHE_FILE="/tmp/jmux_files_cache_${SESSION_SUFFIX}"
 
 # Use session-specific cached file list if available, otherwise fallback to find
 if [ -f "$CACHE_FILE" ]; then
-    SELECTED=$(cat "$CACHE_FILE" | fzf --preview "cat {}" --height=100%)
+    SELECTED=$(cat "$CACHE_FILE" | fzf --preview "cat {}" --height=40 --reverse --border)
 else
-    SELECTED=$(find . -type f -not -path '*/.*' | sed 's|^\./||' | fzf --preview "cat {}" --height=100%)
+    SELECTED=$(find . -type f -not -path '*/.*' | sed 's|^\./||' | fzf --preview "cat {}" --height=40 --reverse --border)
 fi
 
 if [ -n "$SELECTED" ]; then
