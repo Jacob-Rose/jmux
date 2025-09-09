@@ -330,6 +330,9 @@ class TextualJmux(App):
     # Add our custom file finder to the command palette
     COMMANDS = App.COMMANDS | {FileFinderProvider}
     
+    # Increase refresh rate for smoother animations
+    FRAMES_PER_SECOND = 60  # Default is 30
+    
     CSS = """
     Screen {
         layout: horizontal;
