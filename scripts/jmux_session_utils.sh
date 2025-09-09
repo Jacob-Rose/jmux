@@ -15,11 +15,8 @@ _refresh_jmux_cache() {
     local session_info
     session_info=$(tmux display-message -p '#S' 2>/dev/null)
     
-    # Check if valid jmux session
-    if [[ "$session_info" =~ ^jmux- ]] || ([ "$session_info" != "jmux-"* ] && tmux has-session -t "ide" 2>/dev/null); then
-        if [[ ! "$session_info" =~ ^jmux- ]]; then
-            session_info="ide"  # Legacy fallback
-        fi
+    # Check if valid jmux session (only check for new format)
+    if [[ "$session_info" =~ ^jmux- ]]; then
         
         _JMUX_SESSION_CACHE="$session_info"
         

@@ -4,8 +4,14 @@
 
 SEARCH_DIR="${1:-$(pwd)}"
 
-# Show the persistent fzf window
-tmux display-popup -w 80% -h 60% -E "tmux attach-session -t ide:fzf-finder"
+# Show the persistent fzf window - get current jmux session
+current_session=$(tmux display-message -p '#S' 2>/dev/null)
+if [[ "$current_session" =~ ^jmux- ]]; then
+    tmux display-popup -w 80% -h 60% -E "tmux attach-session -t $current_session:fzf-finder"
+else
+    echo "Error: Not in a jmux session"
+    exit 1
+fi
 
 # After popup closes, check if a file was selected
 if [ -f "/tmp/jmux_fzf_output" ]; then

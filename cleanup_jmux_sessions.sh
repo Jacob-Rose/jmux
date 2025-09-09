@@ -6,7 +6,7 @@
 echo "Cleaning up orphaned jmux sessions..."
 
 # Find and kill orphaned jmux sessions
-orphaned_sessions=$(tmux list-sessions 2>/dev/null | grep -E "^(jmux-|ide|jmux-persist-terminal):" || true)
+orphaned_sessions=$(tmux list-sessions 2>/dev/null | grep -E "^(jmux-|jmux-persist-terminal):" || true)
 if [ -n "$orphaned_sessions" ]; then
     echo "Found orphaned jmux sessions:"
     echo "$orphaned_sessions"
@@ -17,8 +17,7 @@ if [ -n "$orphaned_sessions" ]; then
         tmux kill-session -t "$session" 2>/dev/null || true
     done
     
-    # Kill legacy sessions
-    tmux kill-session -t ide 2>/dev/null || true
+    # Kill legacy sessions - removed ide support
     tmux kill-session -t jmux-persist-terminal 2>/dev/null || true
 fi
 
@@ -63,7 +62,7 @@ fi
 echo "Cleanup completed."
 
 # Show remaining tmux sessions for verification
-remaining_sessions=$(tmux list-sessions 2>/dev/null | grep -E "(ide|jmux)" || true)
+remaining_sessions=$(tmux list-sessions 2>/dev/null | grep -E "(jmux)" || true)
 if [ -n "$remaining_sessions" ]; then
     echo "Warning: Some sessions still exist:"
     echo "$remaining_sessions"

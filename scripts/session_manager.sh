@@ -153,11 +153,6 @@ kill_all_sessions() {
         fi
     done
     
-    # Also kill legacy 'ide' sessions
-    if tmux has-session -t "ide" 2>/dev/null; then
-        tmux kill-session -t "ide" 2>/dev/null || true
-        killed_count=$((killed_count + 1))
-    fi
     
     # Clean up temporary files
     rm -f /tmp/jmux_wrapper_* /tmp/jmux_cache_script_* 2>/dev/null || true

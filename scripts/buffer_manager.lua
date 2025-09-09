@@ -217,8 +217,11 @@ function goto_buffer_in_main_window()
   )
   vim.fn.system(cmd)
   
-  -- Switch back to main dev window
-  vim.fn.system("tmux select-window -t ide:dev")
+  -- Switch back to main jmux window
+  local session = vim.fn.system("tmux display-message -p '#S'"):gsub("%s+", "")
+  if session:match("^jmux%-") then
+    vim.fn.system("tmux select-window -t " .. session)
+  end
 end
 
 -- Update recent files display in dedicated window

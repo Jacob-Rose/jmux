@@ -292,10 +292,14 @@ apply_ranger_theme() {
 # Apply tmux settings
 apply_tmux_settings() {
     # Apply status bar setting
-    if [ "${JMUX_STATUS_BAR:-on}" = "on" ]; then
-        tmux set-option -t ide status on
-    else
-        tmux set-option -t ide status off
+    # Get current jmux session
+    current_session=$(tmux display-message -p '#S' 2>/dev/null)
+    if [[ "$current_session" =~ ^jmux- ]]; then
+        if [ "${JMUX_STATUS_BAR:-on}" = "on" ]; then
+            tmux set-option -t "$current_session" status on
+        else
+            tmux set-option -t "$current_session" status off
+        fi
     fi
     
     # Apply pane split (requires restart for full effect)
