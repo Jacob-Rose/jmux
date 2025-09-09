@@ -338,15 +338,51 @@ if [ "$AUTO_SWITCH_SETTING" = "true" ]; then
     # Create auto-switch helper script
     cat > "$CONFIG_BASE/enter_helper.sh" << 'ENTER_EOF'
 #!/bin/bash
-# Try multiple locations for session utils
-for UTILS_PATH in "/usr/local/bin/jmux-scripts/jmux_session_utils.sh" \
-                  "$HOME/Documents/jmux/scripts/jmux_session_utils.sh" \
-                  "$(dirname "$0")/jmux_session_utils.sh"; do
-    if [ -f "$UTILS_PATH" ]; then
-        source "$UTILS_PATH"
-        break
+
+# Fast path-cached sourcing of session utils
+UTILS_CACHE_FILE="/tmp/jmux_utils_path_$$"
+
+# Skip sourcing if functions already exist
+if ! command -v get_jmux_session >/dev/null 2>&1; then
+    # Try cached path first
+    if [ -f "$UTILS_CACHE_FILE" ]; then
+        CACHED_PATH="$(cat "$UTILS_CACHE_FILE")"
+        if [ -f "$CACHED_PATH" ] && source "$CACHED_PATH" 2>/dev/null; then
+            # Cache hit - sourced successfully
+            :
+        else
+            # Cache miss - remove stale cache
+            rm -f "$UTILS_CACHE_FILE"
+        fi
     fi
-done
+    
+    # If still not loaded, do full search and cache result
+    if ! command -v get_jmux_session >/dev/null 2>&1; then
+        POSSIBLE_PATHS=(
+            "/usr/local/bin/jmux-scripts/jmux_session_utils.sh"
+            "$HOME/Documents/jmux/scripts/jmux_session_utils.sh"
+            "$(dirname "$0")/../scripts/jmux_session_utils.sh"
+            "$(dirname "$0")/jmux_session_utils.sh"
+        )
+        
+        # Add jmux-relative paths if available
+        if command -v jmux >/dev/null 2>&1; then
+            JMUX_DIR="$(dirname "$(readlink -f "$(which jmux)" 2>/dev/null || which jmux)" 2>/dev/null)"
+            [ -n "$JMUX_DIR" ] && POSSIBLE_PATHS+=("$JMUX_DIR/scripts/jmux_session_utils.sh" "$JMUX_DIR/../scripts/jmux_session_utils.sh")
+        fi
+        
+        for UTILS_PATH in "${POSSIBLE_PATHS[@]}"; do
+            if [ -f "$UTILS_PATH" ] && source "$UTILS_PATH" 2>/dev/null; then
+                # Cache the successful path
+                echo "$UTILS_PATH" > "$UTILS_CACHE_FILE"
+                break
+            fi
+        done
+        
+        # Verify sourcing worked
+        command -v get_jmux_session >/dev/null 2>&1 || { echo "Error: Could not find jmux_session_utils.sh" >&2; exit 1; }
+    fi
+fi
 if is_jmux_session && has_nvim_pane; then
     send_to_nvim Escape ":lua open_file_in_main_editor('$(readlink -f "$1")')" Enter
     select_nvim_pane
@@ -366,15 +402,51 @@ else
     # Create no-switch helper script
     cat > "$CONFIG_BASE/enter_helper_noswitch.sh" << 'ENTER_EOF'
 #!/bin/bash
-# Try multiple locations for session utils
-for UTILS_PATH in "/usr/local/bin/jmux-scripts/jmux_session_utils.sh" \
-                  "$HOME/Documents/jmux/scripts/jmux_session_utils.sh" \
-                  "$(dirname "$0")/jmux_session_utils.sh"; do
-    if [ -f "$UTILS_PATH" ]; then
-        source "$UTILS_PATH"
-        break
+
+# Fast path-cached sourcing of session utils
+UTILS_CACHE_FILE="/tmp/jmux_utils_path_$$"
+
+# Skip sourcing if functions already exist
+if ! command -v get_jmux_session >/dev/null 2>&1; then
+    # Try cached path first
+    if [ -f "$UTILS_CACHE_FILE" ]; then
+        CACHED_PATH="$(cat "$UTILS_CACHE_FILE")"
+        if [ -f "$CACHED_PATH" ] && source "$CACHED_PATH" 2>/dev/null; then
+            # Cache hit - sourced successfully
+            :
+        else
+            # Cache miss - remove stale cache
+            rm -f "$UTILS_CACHE_FILE"
+        fi
     fi
-done
+    
+    # If still not loaded, do full search and cache result
+    if ! command -v get_jmux_session >/dev/null 2>&1; then
+        POSSIBLE_PATHS=(
+            "/usr/local/bin/jmux-scripts/jmux_session_utils.sh"
+            "$HOME/Documents/jmux/scripts/jmux_session_utils.sh"
+            "$(dirname "$0")/../scripts/jmux_session_utils.sh"
+            "$(dirname "$0")/jmux_session_utils.sh"
+        )
+        
+        # Add jmux-relative paths if available
+        if command -v jmux >/dev/null 2>&1; then
+            JMUX_DIR="$(dirname "$(readlink -f "$(which jmux)" 2>/dev/null || which jmux)" 2>/dev/null)"
+            [ -n "$JMUX_DIR" ] && POSSIBLE_PATHS+=("$JMUX_DIR/scripts/jmux_session_utils.sh" "$JMUX_DIR/../scripts/jmux_session_utils.sh")
+        fi
+        
+        for UTILS_PATH in "${POSSIBLE_PATHS[@]}"; do
+            if [ -f "$UTILS_PATH" ] && source "$UTILS_PATH" 2>/dev/null; then
+                # Cache the successful path
+                echo "$UTILS_PATH" > "$UTILS_CACHE_FILE"
+                break
+            fi
+        done
+        
+        # Verify sourcing worked
+        command -v get_jmux_session >/dev/null 2>&1 || { echo "Error: Could not find jmux_session_utils.sh" >&2; exit 1; }
+    fi
+fi
 if is_jmux_session && has_nvim_pane; then
     send_to_nvim Escape ":lua open_file_in_main_editor('$(readlink -f "$1")')" Enter
     # Stay in ranger - don't switch panes
