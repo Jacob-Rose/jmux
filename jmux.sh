@@ -274,6 +274,8 @@ unmap l
 # Disable right arrow from opening files - only allow directory navigation
 map <right> eval fm.cd(fm.thisfile.path) if fm.thisfile.is_directory else None
 
+RESTRICT_NAV_PLACEHOLDER
+
 # Switch between panes with Tab (toggle between ranger and nvim)
 map <TAB> shell tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%
 
@@ -328,19 +330,83 @@ fi
 # Apply auto-switch to nvim setting (default: true)
 AUTO_SWITCH_SETTING="${JMUX_AUTO_SWITCH:-true}"
 
+# Apply directory restriction setting (default: true)
+RESTRICT_DIRECTORY="${JMUX_RESTRICT_NAVIGATION:-true}"
+
 # Create the appropriate Enter command and append it to ranger config
 if [ "$AUTO_SWITCH_SETTING" = "true" ]; then
-    # Auto-switch to nvim after opening file
-    OPEN_FILE_COMMAND="shell if tmux list-panes -t $JMUX_SESSION_ID:dev | grep -q \"1:\"; then tmux send-keys -t $JMUX_SESSION_ID:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; tmux select-window -t $JMUX_SESSION_ID:dev; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; else tmux split-window -t $JMUX_SESSION_ID:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 1; tmux resize-pane -t 0 -x ${NVIM_FOCUSED_RATIO}%%; fi"
-    echo "map <Enter> $OPEN_FILE_COMMAND" >> "$RANGER_TEMP/rc.conf"
+    # Create auto-switch helper script
+    cat > "$CONFIG_BASE/enter_helper.sh" << 'ENTER_EOF'
+#!/bin/bash
+# Try multiple locations for session utils
+for UTILS_PATH in "/usr/local/bin/jmux-scripts/jmux_session_utils.sh" \
+                  "$HOME/Documents/jmux/scripts/jmux_session_utils.sh" \
+                  "$(dirname "$0")/jmux_session_utils.sh"; do
+    if [ -f "$UTILS_PATH" ]; then
+        source "$UTILS_PATH"
+        break
+    fi
+done
+if is_jmux_session && has_nvim_pane; then
+    send_to_nvim Escape ":lua open_file_in_main_editor('$(readlink -f "$1")')" Enter
+    select_nvim_pane
+    tmux resize-pane -t 0 -x "$(get_nvim_ratio)%"
 else
-    # Stay in ranger after opening file
-    OPEN_FILE_COMMAND="shell if tmux list-panes -t $JMUX_SESSION_ID:dev | grep -q \"1:\"; then tmux send-keys -t $JMUX_SESSION_ID:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; else tmux split-window -t $JMUX_SESSION_ID:dev -h -p 60 \"cd '%d' && nvim -u '$NVIM_TEMP/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 0; fi"
-    echo "map <Enter> $OPEN_FILE_COMMAND" >> "$RANGER_TEMP/rc.conf"
+    TARGET=$(get_jmux_target)
+    if [ -n "$TARGET" ]; then
+        tmux split-window -t "$TARGET" -h -p 60 "cd '$2' && nvim -u '$HOME/.config/jmux/nvim_config/init.lua' '$(readlink -f "$1")'"
+        select_nvim_pane
+        tmux resize-pane -t 0 -x "$(get_nvim_ratio)%"
+    fi
+fi
+ENTER_EOF
+    chmod +x "$CONFIG_BASE/enter_helper.sh"
+    echo "map <Enter> shell \$HOME/.config/jmux/enter_helper.sh %p %d" >> "$RANGER_TEMP/rc.conf"
+else
+    # Create no-switch helper script
+    cat > "$CONFIG_BASE/enter_helper_noswitch.sh" << 'ENTER_EOF'
+#!/bin/bash
+# Try multiple locations for session utils
+for UTILS_PATH in "/usr/local/bin/jmux-scripts/jmux_session_utils.sh" \
+                  "$HOME/Documents/jmux/scripts/jmux_session_utils.sh" \
+                  "$(dirname "$0")/jmux_session_utils.sh"; do
+    if [ -f "$UTILS_PATH" ]; then
+        source "$UTILS_PATH"
+        break
+    fi
+done
+if is_jmux_session && has_nvim_pane; then
+    send_to_nvim Escape ":lua open_file_in_main_editor('$(readlink -f "$1")')" Enter
+    # Stay in ranger - don't switch panes
+else
+    TARGET=$(get_jmux_target)
+    if [ -n "$TARGET" ]; then
+        tmux split-window -t "$TARGET" -h -p 60 "cd '$2' && nvim -u '$HOME/.config/jmux/nvim_config/init.lua' '$(readlink -f "$1")'"
+        select_ranger_pane
+    fi
+fi
+ENTER_EOF
+    chmod +x "$CONFIG_BASE/enter_helper_noswitch.sh"
+    echo "map <Enter> shell \$HOME/.config/jmux/enter_helper_noswitch.sh %p %d" >> "$RANGER_TEMP/rc.conf"
 fi
 
-# Remove the placeholder line
+# Apply directory restriction if enabled
+if [ "$RESTRICT_DIRECTORY" = "true" ]; then
+    cat >> "$RANGER_TEMP/rc.conf" << 'RESTRICT_EOF'
+
+# Restrict navigation to stay within the project directory
+# Override keys that would navigate to parent directories - only allow if parent is within work dir
+map h eval fm.move(left=1) if '$WORK_DIR' in os.path.abspath(os.path.join(fm.thisdir.path, '..')) else None
+map <left> eval fm.move(left=1) if '$WORK_DIR' in os.path.abspath(os.path.join(fm.thisdir.path, '..')) else None
+map <backspace> eval fm.move(left=1) if '$WORK_DIR' in os.path.abspath(os.path.join(fm.thisdir.path, '..')) else None
+RESTRICT_EOF
+    # Replace placeholder with actual work dir
+    sed -i "s|\$WORK_DIR|$WORK_DIR|g" "$RANGER_TEMP/rc.conf"
+fi
+
+# Remove the placeholder lines
 sed -i '/ENTER_MAPPING_PLACEHOLDER/d' "$RANGER_TEMP/rc.conf"
+sed -i '/RESTRICT_NAV_PLACEHOLDER/d' "$RANGER_TEMP/rc.conf"
 
 # Nvim config
 cat > "$NVIM_TEMP/init.lua" <<'EOF'

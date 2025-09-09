@@ -3,6 +3,10 @@
 # Settings Menu for jmux
 # Provides theme selection and other configuration options
 
+# Load session utilities
+SCRIPT_DIR="$(dirname "$0")"
+source "$SCRIPT_DIR/jmux_session_utils.sh"
+
 # Ensure we're in a proper terminal environment
 export TERM=${TERM:-xterm-256color}
 
@@ -131,14 +135,16 @@ show_ranger_menu() {
     echo "Current hidden files: ${JMUX_SHOW_HIDDEN:-false}"
     echo "Current preview: ${JMUX_SHOW_PREVIEW:-false}"
     echo "Current auto-switch to nvim: ${JMUX_AUTO_SWITCH:-true}"
+    echo "Current directory restriction: ${JMUX_RESTRICT_NAVIGATION:-true}"
     echo ""
     echo "1) Change colorscheme"
     echo "2) Toggle hidden files visibility"
     echo "3) Toggle file preview"
     echo "4) Toggle auto-switch to nvim on file open"
-    echo "5) Back to main menu"
+    echo "5) Toggle directory restriction"
+    echo "6) Back to main menu"
     echo ""
-    echo "Enter option number (1-5) or 'q' to quit:"
+    echo "Enter option number (1-6) or 'q' to quit:"
 }
 
 # Tmux settings submenu function
@@ -323,7 +329,10 @@ case $main_choice in
                     THEME="$SELECTED"
                     mkdir -p "$(dirname "$SETTINGS_FILE")"
                     echo "JMUX_THEME=\"$THEME\"" > "$SETTINGS_FILE"
-                    tmux send-keys -t ide:dev.1 Escape ":colorscheme $THEME" Enter
+                    # Apply theme to current nvim session
+                    if is_jmux_session; then
+                        send_to_nvim Escape ":colorscheme $THEME" Enter
+                    fi
                     echo "Theme changed to: $THEME"
                     sleep 1
                 else
@@ -340,7 +349,7 @@ case $main_choice in
         ;;
     2)  # Ranger Settings
         show_ranger_menu
-        read_menu_input 5
+        read_menu_input 6
         ranger_choice=$?
         
         case $ranger_choice in
@@ -401,23 +410,89 @@ case $main_choice in
                 if [ "$JMUX_AUTO_SWITCH" = "true" ]; then
                     # Remove existing Enter mapping and add auto-switch version
                     grep -v "^map <Enter>" "$RANGER_CONFIG" > "${RANGER_CONFIG}.tmp"
-                    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; tmux select-window -t ide:dev; tmux select-pane -t 1; tmux resize-pane -t 0 -x 20%%; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '\$HOME/.config/jmux/nvim_config/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 1; tmux resize-pane -t 0 -x 20%%; fi" >> "${RANGER_CONFIG}.tmp"
+                    # Create a helper script for the Enter command
+                    cat > "$HOME/.config/jmux/enter_helper.sh" << 'ENTER_EOF'
+#!/bin/bash
+# Try multiple locations for session utils
+for UTILS_PATH in "/usr/local/bin/jmux-scripts/jmux_session_utils.sh" \
+                  "$HOME/Documents/jmux/scripts/jmux_session_utils.sh" \
+                  "$(dirname "$0")/jmux_session_utils.sh"; do
+    if [ -f "$UTILS_PATH" ]; then
+        source "$UTILS_PATH"
+        break
+    fi
+done
+if is_jmux_session && has_nvim_pane; then
+    send_to_nvim Escape ":lua open_file_in_main_editor('$(readlink -f "$1")')" Enter
+    select_nvim_pane
+    tmux resize-pane -t 0 -x "$(get_nvim_ratio)%"
+else
+    TARGET=$(get_jmux_target)
+    if [ -n "$TARGET" ]; then
+        tmux split-window -t "$TARGET" -h -p 60 "cd '$2' && nvim -u '$HOME/.config/jmux/nvim_config/init.lua' '$(readlink -f "$1")'"
+        select_nvim_pane
+        tmux resize-pane -t 0 -x "$(get_nvim_ratio)%"
+    fi
+fi
+ENTER_EOF
+                    chmod +x "$HOME/.config/jmux/enter_helper.sh"
+                    echo "map <Enter> shell \$HOME/.config/jmux/enter_helper.sh %p %d" >> "${RANGER_CONFIG}.tmp"
                 else
                     # Remove existing Enter mapping and add no-switch version
                     grep -v "^map <Enter>" "$RANGER_CONFIG" > "${RANGER_CONFIG}.tmp"
-                    echo "map <Enter> shell if tmux list-panes -t ide:dev | grep -q \"1:\"; then tmux send-keys -t ide:dev.1 Escape \":lua open_file_in_main_editor('\$(readlink -f %p)')\" Enter; else tmux split-window -t ide:dev -h -p 60 \"cd '%d' && nvim -u '\$HOME/.config/jmux/nvim_config/init.lua' '\$(readlink -f %p)'\"; tmux select-pane -t 0; fi" >> "${RANGER_CONFIG}.tmp"
+                    # Create a helper script for the Enter command (no-switch version)
+                    cat > "$HOME/.config/jmux/enter_helper_noswitch.sh" << 'ENTER_EOF'
+#!/bin/bash
+# Try multiple locations for session utils
+for UTILS_PATH in "/usr/local/bin/jmux-scripts/jmux_session_utils.sh" \
+                  "$HOME/Documents/jmux/scripts/jmux_session_utils.sh" \
+                  "$(dirname "$0")/jmux_session_utils.sh"; do
+    if [ -f "$UTILS_PATH" ]; then
+        source "$UTILS_PATH"
+        break
+    fi
+done
+if is_jmux_session && has_nvim_pane; then
+    send_to_nvim Escape ":lua open_file_in_main_editor('$(readlink -f "$1")')" Enter
+    # Stay in ranger - don't switch panes
+else
+    TARGET=$(get_jmux_target)
+    if [ -n "$TARGET" ]; then
+        tmux split-window -t "$TARGET" -h -p 60 "cd '$2' && nvim -u '$HOME/.config/jmux/nvim_config/init.lua' '$(readlink -f "$1")'"
+        select_ranger_pane
+    fi
+fi
+ENTER_EOF
+                    chmod +x "$HOME/.config/jmux/enter_helper_noswitch.sh"
+                    echo "map <Enter> shell \$HOME/.config/jmux/enter_helper_noswitch.sh %p %d" >> "${RANGER_CONFIG}.tmp"
                 fi
                 mv "${RANGER_CONFIG}.tmp" "$RANGER_CONFIG"
                 
                 # Try to reload ranger config automatically
-                tmux send-keys -t ide:dev.0 C-r 2>/dev/null || true
+                if is_jmux_session; then
+                    send_to_ranger C-r
+                fi
                 
                 echo "Auto-switch to nvim changed to: $JMUX_AUTO_SWITCH"
                 echo "Ranger config reloaded - setting is now active!"
                 sleep 2
                 exec "$0"
                 ;;
-            5)  # Back to main menu
+            5)  # Toggle directory restriction
+                if [ "${JMUX_RESTRICT_NAVIGATION:-true}" = "true" ]; then
+                    JMUX_RESTRICT_NAVIGATION="false"
+                else
+                    JMUX_RESTRICT_NAVIGATION="true"
+                fi
+                # Save setting
+                save_setting "JMUX_RESTRICT_NAVIGATION" "$JMUX_RESTRICT_NAVIGATION"
+                
+                echo "Directory restriction changed to: $JMUX_RESTRICT_NAVIGATION"
+                echo "Restart jmux session to apply this change"
+                sleep 2
+                exec "$0"
+                ;;
+            6)  # Back to main menu
                 exec "$0"
                 ;;
             0)  # Invalid/cancelled
