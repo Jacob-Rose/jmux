@@ -2,6 +2,14 @@
 
 # jmux: A tmux-based IDE with ranger and nvim
 # Usage: jmux [directory]
+
+# Set terminal title for status bars
+WORK_DIR_FOR_TITLE="${1:-$(pwd)}"
+WORK_DIR_FOR_TITLE="$(cd "$WORK_DIR_FOR_TITLE" 2>/dev/null && pwd || echo "$WORK_DIR_FOR_TITLE")"
+TERMINAL_TITLE="jmux - $(basename "$WORK_DIR_FOR_TITLE")"
+
+# Set terminal title using ANSI escape codes
+printf '\033]0;%s\007' "$TERMINAL_TITLE"
 #
 # Features:
 #   - File manager (ranger) with nvim integration
@@ -505,7 +513,7 @@ chmod +x "$WRAPPER_SCRIPT"
 
 # Start tmux session with the wrapper
 tmux new-session -d -s "$JMUX_SESSION_ID" "bash $WRAPPER_SCRIPT"
-tmux rename-window -t "$JMUX_SESSION_ID" 'dev'
+tmux rename-window -t "$JMUX_SESSION_ID" "jmux - $(basename "$WORK_DIR")"
 
 # Pre-cache file list for faster fzf startup with parent process monitoring
 CACHE_WINDOW_NAME="fzf-cache"
