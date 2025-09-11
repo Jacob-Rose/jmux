@@ -1,0 +1,10 @@
+- Add branch filter for the :gl command
+- fix refresh on ranger when we tab
+- fix double click for fzf when in docker + wsl + remote instance (idk which part of that is the culprit)
+- take over : command palette for lazygit, add :q option
+- popups for terminals break copy/paste and make it annoyingly draggable
+- make nano supported as alternative to nvim
+- make CLAUDE.md just force read of AGENTS.md
+- add sticky note functionality (with persistant saving to directory)
+- add mermaid support?
+- clanup codebase
