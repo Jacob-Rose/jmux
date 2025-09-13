@@ -201,6 +201,12 @@ if [[ "$SCRIPT_DIR" == *"/.config/jmux"* ]] || [[ "$SCRIPT_DIR" == *"/usr/local/
     CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}/jmux"
     mkdir -p "$CONFIG_BASE"
     # Copy helper scripts if they don't exist (for installed mode)
+    if [ -f "$SCRIPT_DIR/../scripts/jmux_logging_utilities.sh" ] && [ ! -f "$CONFIG_BASE/jmux_logging_utilities.sh" ]; then
+        cp "$SCRIPT_DIR/../scripts/jmux_logging_utilities.sh" "$CONFIG_BASE/"
+    fi
+    if [ -f "$SCRIPT_DIR/../scripts/jmux_dev_utilities.sh" ] && [ ! -f "$CONFIG_BASE/jmux_dev_utilities.sh" ]; then
+        cp "$SCRIPT_DIR/../scripts/jmux_dev_utilities.sh" "$CONFIG_BASE/"
+    fi
     if [ -f "$SCRIPT_DIR/../scripts/enter_helper.sh" ] && [ ! -f "$CONFIG_BASE/enter_helper.sh" ]; then
         cp "$SCRIPT_DIR/../scripts/enter_helper.sh" "$CONFIG_BASE/"
     fi
@@ -213,6 +219,12 @@ else
     echo "Running in portable mode, config at: $CONFIG_BASE"
     mkdir -p "$CONFIG_BASE"
     # Copy session utilities and helpers to portable config so they're always available
+    if [ -f "$SCRIPT_DIR/scripts/jmux_logging_utilities.sh" ]; then
+        cp "$SCRIPT_DIR/scripts/jmux_logging_utilities.sh" "$CONFIG_BASE/"
+    fi
+    if [ -f "$SCRIPT_DIR/scripts/jmux_dev_utilities.sh" ]; then
+        cp "$SCRIPT_DIR/scripts/jmux_dev_utilities.sh" "$CONFIG_BASE/"
+    fi
     if [ -f "$SCRIPT_DIR/scripts/jmux_session_utils.sh" ]; then
         cp "$SCRIPT_DIR/scripts/jmux_session_utils.sh" "$CONFIG_BASE/"
     fi
@@ -226,14 +238,27 @@ fi
 RANGER_TEMP="$CONFIG_BASE/ranger_config"
 NVIM_TEMP="$CONFIG_BASE/nvim_config"
 
+# Load logging utilities
+if [ -f "$SCRIPT_DIR/scripts/jmux_logging_utilities.sh" ]; then
+    . "$SCRIPT_DIR/scripts/jmux_logging_utilities.sh" || echo "Warning: Failed to load logging utilities"
+elif [ -f "/usr/local/bin/jmux-scripts/jmux_logging_utilities.sh" ]; then
+    . "/usr/local/bin/jmux-scripts/jmux_logging_utilities.sh" || echo "Warning: Failed to load logging utilities"
+fi
+
 # Load session utilities
 if [ -f "$SCRIPT_DIR/scripts/jmux_session_utils.sh" ]; then
-    source "$SCRIPT_DIR/scripts/jmux_session_utils.sh"
+    . "$SCRIPT_DIR/scripts/jmux_session_utils.sh" || echo "Warning: Failed to load session utilities"
 elif [ -f "/usr/local/bin/jmux-scripts/jmux_session_utils.sh" ]; then
-    source "/usr/local/bin/jmux-scripts/jmux_session_utils.sh"
+    . "/usr/local/bin/jmux-scripts/jmux_session_utils.sh" || echo "Warning: Failed to load session utilities"
 else
     echo "Warning: Could not find jmux_session_utils.sh - some features may not work"
 fi
+
+# Initialize logging
+clear_log "jmux"
+log_info "jmux" "Starting jmux session with PID $$"
+log_info "jmux" "Work directory: $WORK_DIR"
+log_info "jmux" "Config base: $CONFIG_BASE"
 
 # Load configuration
 if [ -f "$SCRIPT_DIR/config.sh" ]; then
@@ -387,8 +412,9 @@ map h eval fm.move(left=1) if '$WORK_DIR' in os.path.abspath(os.path.join(fm.thi
 map <left> eval fm.move(left=1) if '$WORK_DIR' in os.path.abspath(os.path.join(fm.thisdir.path, '..')) else None
 map <backspace> eval fm.move(left=1) if '$WORK_DIR' in os.path.abspath(os.path.join(fm.thisdir.path, '..')) else None
 RESTRICT_EOF
-    # Replace placeholder with actual work dir
-    sed -i "s|\$WORK_DIR|$WORK_DIR|g" "$RANGER_TEMP/rc.conf"
+    # Replace placeholder with actual work dir (escape special characters)
+    ESCAPED_WORK_DIR=$(printf '%s\n' "$WORK_DIR" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    sed -i "s|\$WORK_DIR|$ESCAPED_WORK_DIR|g" "$RANGER_TEMP/rc.conf"
 fi
 
 # Remove the placeholder lines
@@ -565,8 +591,9 @@ echo "cd '$WORK_DIR' && ranger --confdir='$RANGER_TEMP'" >> "$WRAPPER_SCRIPT"
 chmod +x "$WRAPPER_SCRIPT"
 
 # Start tmux session with the wrapper
-tmux new-session -d -s "$JMUX_SESSION_ID" "bash $WRAPPER_SCRIPT"
-tmux rename-window -t "$JMUX_SESSION_ID" "jmux - $(basename "$WORK_DIR")"
+log_info "jmux" "Creating tmux session: $JMUX_SESSION_ID"
+log_command "jmux" "Creating new tmux session" tmux new-session -d -s "$JMUX_SESSION_ID" "bash $WRAPPER_SCRIPT"
+log_command "jmux" "Renaming tmux window" tmux rename-window -t "$JMUX_SESSION_ID" "jmux-$(basename "$WORK_DIR")"
 
 # Pre-cache file list for faster fzf startup with parent process monitoring
 CACHE_WINDOW_NAME="fzf-cache"
@@ -612,6 +639,12 @@ echo ""
 
 # Attach to the session and handle cleanup when it ends
 if tmux has-session -t "$JMUX_SESSION_ID" 2>/dev/null; then
+    # Check if we have a proper terminal before attaching
+    if [ ! -t 0 ] || [ ! -t 1 ] || [ ! -t 2 ]; then
+        echo "Error: jmux requires a terminal to run"
+        exit 1
+    fi
+    
     # Disable the EXIT trap temporarily to avoid double cleanup
     trap - EXIT
     

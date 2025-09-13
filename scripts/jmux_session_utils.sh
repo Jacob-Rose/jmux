@@ -147,11 +147,13 @@ has_nvim_pane() {
 
 # Get environment-appropriate focused ratios
 get_ranger_ratio() {
-    echo "${RANGER_FOCUSED_RATIO:-40}"
+    local ratio="${RANGER_FOCUSED_RATIO:-40}"
+    echo "$ratio"
 }
 
 get_nvim_ratio() {
-    echo "${NVIM_FOCUSED_RATIO:-20}"
+    local ratio="${NVIM_FOCUSED_RATIO:-30}"
+    echo "$ratio"
 }
 
 # Example usage function (for testing/documentation)
