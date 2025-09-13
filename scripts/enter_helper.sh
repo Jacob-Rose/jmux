@@ -54,6 +54,11 @@ else
         NVIM_RATIO="$(get_nvim_ratio)"
         log_info "enter_helper" "Resizing ranger pane to ${NVIM_RATIO}%"
         log_command "enter_helper" "Resize ranger pane" tmux resize-pane -t 0 -x "${NVIM_RATIO}%"
+        log_info "enter_helper" "File opening completed successfully"
+        # Update status for test coordination
+        if [ "$JMUX_TEST_MODE" = "true" ] && [ -n "$JMUX_STATUS_FILE" ]; then
+            echo "file_opened" > "$JMUX_STATUS_FILE"
+        fi
     else
         log_error "enter_helper" "No jmux target found"
     fi

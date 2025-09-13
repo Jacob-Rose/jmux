@@ -35,7 +35,13 @@ case "${1:-help}" in
         list_library_functions
         ;;
     "test")
-        cd "$SCRIPT_DIR/tests" && bash run_all_tests.sh
+        cd "$SCRIPT_DIR/tests" && bash run_all_tests.sh "$@"
+        ;;
+    "integration-test")
+        cd "$SCRIPT_DIR/tests" && bash run_all_tests.sh --integration
+        ;;
+    "unit-test")
+        cd "$SCRIPT_DIR/tests" && bash run_all_tests.sh --unit
         ;;
     "cleanup")
         if [ -f "$SCRIPT_DIR/cleanup_jmux_sessions.sh" ]; then
@@ -51,13 +57,15 @@ case "${1:-help}" in
         echo "Usage: $0 <command> [args]"
         echo ""
         echo "Commands:"
-        echo "  report     - Generate comprehensive analysis report"
-        echo "  function   - Analyze specific function (requires function name)"
-        echo "  coverage   - Show test coverage analysis"
-        echo "  functions  - List all library functions"
-        echo "  test       - Run all tests"
-        echo "  cleanup    - Clean up orphaned jmux sessions"
-        echo "  help       - Show this help message"
+        echo "  report          - Generate comprehensive analysis report"
+        echo "  function        - Analyze specific function (requires function name)"
+        echo "  coverage        - Show test coverage analysis"
+        echo "  functions       - List all library functions"
+        echo "  test            - Run all tests"
+        echo "  integration-test- Run only integration tests"
+        echo "  unit-test       - Run only unit tests"
+        echo "  cleanup         - Clean up orphaned jmux sessions"
+        echo "  help            - Show this help message"
         echo ""
         echo "Examples:"
         echo "  $0 report"

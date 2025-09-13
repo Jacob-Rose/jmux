@@ -132,12 +132,14 @@ teardown_test_env() {
 # Load library functions for testing
 load_lib() {
     local lib_file="$1"
-    local lib_path="../lib/$lib_file"
+    local lib_path="./lib/$lib_file"
     
     if [ -f "$lib_path" ]; then
         source "$lib_path"
+    elif [ -f "../lib/$lib_file" ]; then
+        source "../lib/$lib_file"
     else
-        echo "Error: Library file '$lib_path' not found"
+        echo "Error: Library file '$lib_file' not found"
         exit 1
     fi
 }

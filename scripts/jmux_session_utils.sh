@@ -10,6 +10,8 @@ _JMUX_WINDOW_CACHE=""
 _JMUX_TARGET_CACHE=""
 _JMUX_HAS_NVIM_CACHE=""
 
+# Test session override - applied after functions are defined
+
 # Get all jmux session info in one tmux call
 _refresh_jmux_cache() {
     local session_info
@@ -170,4 +172,54 @@ print_jmux_info() {
 # If script is run directly, show info
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     print_jmux_info
+fi
+# Test session override
+if [ -n "$JMUX_TEST_SESSION" ]; then
+    # echo "DEBUG: JMUX_TEST_SESSION override active: $JMUX_TEST_SESSION" >&2
+    get_jmux_session() {
+        # echo "DEBUG: get_jmux_session called, returning: $JMUX_TEST_SESSION" >&2
+        echo "$JMUX_TEST_SESSION"
+        return 0
+    }
+    
+    get_jmux_target() {
+        # echo "DEBUG: get_jmux_target called" >&2
+        echo "$JMUX_TEST_SESSION"
+        return 0
+    }
+    
+    get_jmux_window() {
+        # echo "DEBUG: get_jmux_window called" >&2
+        echo "0"
+        return 0
+    }
+    
+    has_nvim_pane() {
+        # echo "DEBUG: has_nvim_pane called" >&2
+        return 0
+    }
+    
+    select_ranger_pane() {
+        # echo "DEBUG: select_ranger_pane called" >&2
+        return 0
+    }
+    
+    select_nvim_pane() {
+        # echo "DEBUG: select_nvim_pane called" >&2
+        return 0
+    }
+    
+    send_to_ranger() {
+        local command="$1"
+        # echo "DEBUG: send_to_ranger called with: $command" >&2
+        # In test mode, just simulate success
+        return 0
+    }
+    
+    send_to_nvim() {
+        local command="$1"
+        # echo "DEBUG: send_to_nvim called with: $command" >&2
+        # In test mode, just simulate success
+        return 0
+    }
 fi

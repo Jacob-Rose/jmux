@@ -24,7 +24,7 @@ printf '\033]0;%s\007' "$TERMINAL_TITLE"
 # The script includes comprehensive cleanup on exit, but in extreme cases
 # (system crashes, kill -9, etc.) manual cleanup may be needed.
 
-# Handle command line arguments for session management
+# Handle command line arguments for session management and testing
 case "${1:-}" in
     "list")
         SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -73,10 +73,37 @@ case "${1:-}" in
         fi
         exit 0
         ;;
+    "test-mode")
+        # Enable test mode - bypass terminal detection
+        JMUX_TEST_MODE=true
+        export JMUX_TEST_MODE
+        # Shift to remove the test-mode argument
+        shift
+        ;;
+    "help"|"-h"|"--help")
+        echo "jmux - A tmux-based IDE"
+        echo ""
+        echo "Usage: jmux [options] [directory]"
+        echo ""
+        echo "Options:"
+        echo "  list              List active jmux sessions"
+        echo "  kill <session>    Kill a specific session"
+        echo "  kill-all          Kill all jmux sessions"
+        echo "  attach <session>  Attach to a specific session"
+        echo "  test-mode         Enable test mode (bypass terminal checks)"
+        echo "  help              Show this help"
+        echo ""
+        echo "Examples:"
+        echo "  jmux                    # Start in current directory"
+        echo "  jmux /path/to/project   # Start in specific directory"
+        echo "  jmux test-mode .        # Start in test mode"
+        exit 0
+        ;;
 esac
 
 # Set working directory (use argument or current directory, skipping session management commands)
-if [[ "$1" =~ ^(list|kill|kill-all|attach)$ ]]; then
+# Note: This must come AFTER the case statement that handles test-mode
+if [[ "$1" =~ ^(list|kill|kill-all|attach|test-mode)$ ]]; then
     WORK_DIR="$(pwd)"
 else
     WORK_DIR="${1:-$(pwd)}"
@@ -259,6 +286,27 @@ clear_log "jmux"
 log_info "jmux" "Starting jmux session with PID $$"
 log_info "jmux" "Work directory: $WORK_DIR"
 log_info "jmux" "Config base: $CONFIG_BASE"
+
+# Detect test mode (either explicit or automatic)
+log_info "jmux" "Checking for test mode: JMUX_TEST_MODE='$JMUX_TEST_MODE', WORK_DIR='$WORK_DIR'"
+if [ "$JMUX_TEST_MODE" = "true" ] || [[ "$WORK_DIR" == *integration_test* ]] || [ -f "/tmp/jmux_test_mode" ]; then
+    JMUX_TEST_MODE=true
+    JMUX_STATUS_FILE="/tmp/jmux_status_$$"
+    echo "initializing" > "$JMUX_STATUS_FILE"
+    export JMUX_STATUS_FILE
+    log_info "jmux" "Test mode detected, status file: $JMUX_STATUS_FILE"
+else
+    log_info "jmux" "Normal mode"
+fi
+
+# Status update function for test coordination
+update_status() {
+    local status="$1"
+    if [ "$JMUX_TEST_MODE" = "true" ] && [ -n "$JMUX_STATUS_FILE" ]; then
+        echo "$status" > "$JMUX_STATUS_FILE"
+        log_info "jmux" "Status: $status"
+    fi
+}
 
 # Load configuration
 if [ -f "$SCRIPT_DIR/config.sh" ]; then
@@ -592,8 +640,10 @@ chmod +x "$WRAPPER_SCRIPT"
 
 # Start tmux session with the wrapper
 log_info "jmux" "Creating tmux session: $JMUX_SESSION_ID"
+update_status "creating_session"
 log_command "jmux" "Creating new tmux session" tmux new-session -d -s "$JMUX_SESSION_ID" "bash $WRAPPER_SCRIPT"
 log_command "jmux" "Renaming tmux window" tmux rename-window -t "$JMUX_SESSION_ID" "jmux-$(basename "$WORK_DIR")"
+update_status "session_created"
 
 # Pre-cache file list for faster fzf startup with parent process monitoring
 CACHE_WINDOW_NAME="fzf-cache"
@@ -637,20 +687,41 @@ echo "Working directory: $WORK_DIR"
 echo "Use 'jmux list' to see all active sessions"
 echo ""
 
+update_status "ready_for_testing"
+
 # Attach to the session and handle cleanup when it ends
 if tmux has-session -t "$JMUX_SESSION_ID" 2>/dev/null; then
+    if [ "$JMUX_TEST_MODE" = "true" ]; then
+        # In test mode, stay alive for integration testing
+        echo "Test mode: Session created successfully, staying alive for testing"
+        # Don't exit immediately, allow tests to interact with the session
+        # Set up signal handlers to allow graceful shutdown
+        trap 'echo "Test mode shutdown received"; cleanup; exit 0' TERM INT
+        
+        # Wait indefinitely but respond to signals
+        while true; do
+            sleep 1
+            # Check if session still exists
+            if ! tmux has-session -t "$JMUX_SESSION_ID" 2>/dev/null; then
+                echo "Session no longer exists, exiting test mode"
+                cleanup
+                exit 0
+            fi
+        done
+    fi
+
     # Check if we have a proper terminal before attaching
     if [ ! -t 0 ] || [ ! -t 1 ] || [ ! -t 2 ]; then
         echo "Error: jmux requires a terminal to run"
         exit 1
     fi
-    
+
     # Disable the EXIT trap temporarily to avoid double cleanup
     trap - EXIT
-    
+
     # Attach to session - this will block until session ends
     tmux attach-session -t "$JMUX_SESSION_ID"
-    
+
     # When we get here, the session has ended naturally
     # Re-enable cleanup for any remaining processes
     trap cleanup INT TERM
