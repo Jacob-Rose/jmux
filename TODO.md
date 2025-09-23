@@ -8,3 +8,6 @@
 - add sticky note functionality (with persistant saving to directory)
 - add mermaid support?
 - clanup codebase
+- detect when click switch between tabs to change size, many times we lose focus and dont change size
+- neovim plugin support
+
